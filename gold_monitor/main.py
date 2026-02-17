@@ -25,7 +25,7 @@ def setup_logging():
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         handlers=[
-            logging.FileHandler("logs/monitor.log"),
+            logging.FileHandler("logs/monitor.log", encoding="utf-8"),
             logging.StreamHandler(sys.stdout),
         ],
     )

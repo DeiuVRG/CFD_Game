@@ -12,6 +12,8 @@ class InstrumentConfig:
     SYMBOL_DISPLAY: str      # Human-readable name
     MODEL_PATH: str          # Path to trained XGBoost model
     TWELVEDATA_SYMBOL: str = ""  # Twelve Data symbol for real-time prices
+    TV_SYMBOL: str = ""      # TradingView symbol for real-time spot prices
+    TV_EXCHANGE: str = "cfd"  # TradingView scan endpoint (cfd or forex)
     CANDLE_INTERVAL: str = "5m"
     HISTORY_PERIOD: str = "5d"
     TRAIN_PERIOD: str = "2y"
@@ -30,6 +32,8 @@ INSTRUMENTS = [
         SYMBOL_DISPLAY="XAU/USD (Gold)",
         MODEL_PATH="models/gold_xgb.pkl",
         TWELVEDATA_SYMBOL="XAU/USD",
+        TV_SYMBOL="OANDA:XAUUSD",
+        TV_EXCHANGE="cfd",
         PRICE_CHANGE_THRESHOLD=0.005,
     ),
     InstrumentConfig(
@@ -37,6 +41,8 @@ INSTRUMENTS = [
         SYMBOL_DISPLAY="EUR/USD",
         MODEL_PATH="models/eurusd_xgb.pkl",
         TWELVEDATA_SYMBOL="EUR/USD",
+        TV_SYMBOL="FX:EURUSD",
+        TV_EXCHANGE="forex",
         PRICE_CHANGE_THRESHOLD=0.002,
     ),
     InstrumentConfig(
@@ -44,15 +50,17 @@ INSTRUMENTS = [
         SYMBOL_DISPLAY="GBP/USD",
         MODEL_PATH="models/gbpusd_xgb.pkl",
         TWELVEDATA_SYMBOL="GBP/USD",
+        TV_SYMBOL="FX:GBPUSD",
+        TV_EXCHANGE="forex",
         PRICE_CHANGE_THRESHOLD=0.002,
-        ENABLED=False,  # Dezactivat
+        ENABLED=False,
     ),
 ]
 
 
 @dataclass
 class MonitorConfig:
-    FETCH_INTERVAL_SEC: int = 60  # 1 min (batch request = 1 call for all instruments)
+    FETCH_INTERVAL_SEC: int = 10  # 10 sec (batch request = 1 call for all instruments)
     ANALYSIS_INTERVAL_SEC: int = 60
     CANDLE_LOOKBACK: int = 100
 

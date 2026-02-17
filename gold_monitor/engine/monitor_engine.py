@@ -1,7 +1,9 @@
 import csv
 import logging
 import os
+import sys
 import time
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -58,10 +60,17 @@ class InstrumentMonitor:
 class MonitorEngine:
     """Main loop: monitors multiple instruments, tracks positions, notifies Discord."""
 
+    # Re-train every 6 hours
+    RETRAIN_INTERVAL_SEC = 6 * 60 * 60
+
     def __init__(self):
         self.discord = DiscordNotifier()
         self.position_tracker = PositionTracker()
         self.is_running = False
+        self._pending_command: Optional[str] = None
+        self._last_retrain_time: float = 0
+        self._retrain_in_progress = False
+        self.last_retrain_status: str = ""
 
         # Create a monitor for each enabled instrument
         self.monitors: list[InstrumentMonitor] = []
@@ -282,10 +291,143 @@ class MonitorEngine:
                 mon.change = live["change"]
                 mon.change_pct = live["change_pct"]
 
+    def _retrain_background(self):
+        """Re-train all AI models in a background thread."""
+        self._retrain_in_progress = True
+        self.last_retrain_status = "Training..."
+        logger.info("Background retrain started")
+
+        try:
+            for mon in self.monitors:
+                inst = mon.instrument
+                logger.info(f"Retraining {inst.SYMBOL_DISPLAY}...")
+
+                # Download fresh data
+                fetcher = MarketFetcher(inst)
+                df = fetcher.get_training_data()
+                if df.empty or len(df) < 200:
+                    logger.warning(f"Not enough data for {inst.SYMBOL_DISPLAY}")
+                    continue
+
+                # Create features and labels
+                features = FeatureEngineer.create_features(df)
+                labels = FeatureEngineer.create_labels(
+                    df, horizon=AI.PREDICTION_HORIZON,
+                    threshold=inst.PRICE_CHANGE_THRESHOLD,
+                )
+
+                valid_mask = features.notna().all(axis=1) & labels.notna()
+                features = features[valid_mask].reset_index(drop=True)
+                labels = labels[valid_mask].reset_index(drop=True)
+
+                if len(features) < 100:
+                    continue
+
+                # Train new model
+                predictor = GoldPredictor(model_path=inst.MODEL_PATH)
+                metrics = predictor.train(features, labels)
+                predictor.save()
+
+                # Hot-reload into the running monitor
+                mon.ai_strategy.predictor.load()
+
+                acc = metrics["accuracy"] * 100
+                logger.info(f"Retrained {inst.SYMBOL_DISPLAY}: {acc:.1f}% accuracy")
+
+            now = datetime.utcnow().strftime("%H:%M")
+            self.last_retrain_status = f"OK ({now})"
+            self._last_retrain_time = time.time()
+            logger.info("Background retrain completed")
+
+        except Exception as e:
+            self.last_retrain_status = f"Error: {e}"
+            logger.error(f"Retrain error: {e}", exc_info=True)
+        finally:
+            self._retrain_in_progress = False
+
+    def _maybe_retrain(self):
+        """Start retrain if enough time has passed."""
+        if self._retrain_in_progress:
+            return
+        now = time.time()
+        if self._last_retrain_time == 0:
+            # First retrain: wait 5 minutes after startup
+            if now - self._start_time < 300:
+                return
+        elif now - self._last_retrain_time < self.RETRAIN_INTERVAL_SEC:
+            return
+
+        thread = threading.Thread(target=self._retrain_background, daemon=True)
+        thread.start()
+
+    def _keyboard_listener(self):
+        """Listen for keyboard input in a background thread.
+        Ctrl+W = chr(23), Ctrl+L = chr(12)
+        """
+        if sys.platform == "win32":
+            import msvcrt
+            while self.is_running:
+                if msvcrt.kbhit():
+                    key = msvcrt.getch()
+                    if key == b'\x17':      # Ctrl+W
+                        self._pending_command = "ctrl_w"
+                    elif key == b'\x0c':    # Ctrl+L
+                        self._pending_command = "ctrl_l"
+                time.sleep(0.1)
+        else:
+            import select
+            while self.is_running:
+                if select.select([sys.stdin], [], [], 0.1)[0]:
+                    key = sys.stdin.read(1)
+                    if key == '\x17':
+                        self._pending_command = "ctrl_w"
+                    elif key == '\x0c':
+                        self._pending_command = "ctrl_l"
+
+    def _process_keyboard(self):
+        """Process pending keyboard commands."""
+        cmd = self._pending_command
+        if cmd is None:
+            return
+
+        self._pending_command = None
+
+        # Find instruments with open positions
+        open_positions = []
+        for mon in self.monitors:
+            pos = self.position_tracker.get_position(mon.display_name)
+            if pos:
+                open_positions.append((mon, pos))
+
+        if cmd == "ctrl_w":
+            # Ctrl+W = Close on WIN
+            for mon, pos in open_positions:
+                closed = self.position_tracker.close_position(
+                    mon.display_name, mon.price, "MANUAL_WIN"
+                )
+                if closed:
+                    self.discord.send_close_signal(closed)
+                    logger.info(f"Manual WIN close: {mon.display_name} @ {mon.price}")
+
+        elif cmd == "ctrl_l":
+            # Ctrl+L = Close on LOSS
+            for mon, pos in open_positions:
+                closed = self.position_tracker.close_position(
+                    mon.display_name, mon.price, "MANUAL_LOSS"
+                )
+                if closed:
+                    self.discord.send_close_signal(closed)
+                    logger.info(f"Manual LOSS close: {mon.display_name} @ {mon.price}")
+
     def run(self):
         """Main monitoring loop for all instruments."""
         self.is_running = True
+        self._start_time = time.time()
         logger.info(f"Trading Monitor starting with {len(self.monitors)} instruments...")
+
+        # Start keyboard listener thread
+        kb_thread = threading.Thread(target=self._keyboard_listener, daemon=True)
+        kb_thread.start()
 
         # Initial fetch with prev_close (uses /quote endpoint, 1 per instrument)
         for mon in self.monitors:
@@ -297,6 +439,12 @@ class MonitorEngine:
 
         while self.is_running:
             try:
+                # Process keyboard commands
+                self._process_keyboard()
+
+                # Auto-retrain AI models periodically
+                self._maybe_retrain()
+
                 # Single batch API call for all prices
                 self._batch_update_prices()
 
@@ -309,6 +457,7 @@ class MonitorEngine:
                     monitors=self.monitors,
                     position_tracker=self.position_tracker,
                     results=results,
+                    retrain_status=self.last_retrain_status,
                 )
 
                 time.sleep(MONITOR.FETCH_INTERVAL_SEC)

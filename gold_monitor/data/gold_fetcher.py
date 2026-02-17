@@ -15,6 +15,7 @@ logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 logger = logging.getLogger(__name__)
 
 TWELVEDATA_PRICE_URL = "https://api.twelvedata.com/price"
+TRADINGVIEW_SCAN_URL = "https://scanner.tradingview.com/{exchange}/scan"
 YAHOO_API_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 YAHOO_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
@@ -25,13 +26,14 @@ TWELVEDATA_DAILY_LIMIT = 800
 
 
 class CreditTracker:
-    """Tracks Twelve Data API credits used today."""
+    """Tracks data source and Twelve Data API credits."""
 
     def __init__(self, daily_limit: int = TWELVEDATA_DAILY_LIMIT):
         self.daily_limit = daily_limit
         self._credits_used: int = 0
         self._reset_date: str = ""
         self._exhausted = False
+        self._source: str = "TradingView"
 
     @property
     def credits_remaining(self) -> int:
@@ -45,25 +47,22 @@ class CreditTracker:
 
     @property
     def source_name(self) -> str:
-        return "Yahoo" if self.is_exhausted else "TwelveData"
+        return self._source
+
+    def set_source(self, name: str):
+        self._source = name
 
     def use_credits(self, count: int):
         self._check_reset()
         self._credits_used += count
         if self._credits_used >= self.daily_limit:
             self._exhausted = True
-            logger.warning(
-                f"Twelve Data credits exhausted ({self._credits_used}/{self.daily_limit}). "
-                f"Switching to Yahoo Finance."
-            )
 
     def mark_exhausted(self):
-        """Called when API returns rate limit error."""
         self._exhausted = True
         self._credits_used = self.daily_limit
 
     def _check_reset(self):
-        """Reset credits at midnight UTC."""
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if today != self._reset_date:
             self._reset_date = today
@@ -76,25 +75,58 @@ class CreditTracker:
 credit_tracker = CreditTracker()
 
 
-def fetch_all_prices_batch(instruments: list) -> dict:
+# ---------------------------------------------------------------------------
+# TradingView Scanner (primary - free, no API key, spot prices)
+# ---------------------------------------------------------------------------
+
+def _fetch_tradingview_batch(instruments: list) -> dict:
+    """Fetch real-time spot prices from TradingView scanner API.
+    Free, no API key needed, no daily limit.
+    Returns dict: { 'XAU/USD': price, 'EUR/USD': price, ... }
     """
-    Fetch prices for ALL instruments in a single API call.
-    Uses Twelve Data if credits available, otherwise Yahoo Finance.
-    Returns dict: { 'XAU/USD': 5025.45, 'EUR/USD': 1.1866, ... }
-    """
-    enabled = [i for i in instruments if i.TWELVEDATA_SYMBOL and i.ENABLED]
-    if not enabled:
-        return {}
+    # Group instruments by TV exchange endpoint
+    by_exchange: dict[str, list] = {}
+    for inst in instruments:
+        if inst.TV_SYMBOL:
+            ex = inst.TV_EXCHANGE or "cfd"
+            by_exchange.setdefault(ex, []).append(inst)
 
-    # Try Twelve Data first (if credits available)
-    if not credit_tracker.is_exhausted and TWELVEDATA_API_KEY:
-        prices = _fetch_twelvedata_batch(enabled)
-        if prices:
-            return prices
+    prices = {}
+    for exchange, insts in by_exchange.items():
+        tickers = [i.TV_SYMBOL for i in insts]
+        try:
+            payload = {
+                "symbols": {"tickers": tickers},
+                "columns": ["close", "change", "change_abs"],
+            }
+            resp = requests.post(
+                TRADINGVIEW_SCAN_URL.format(exchange=exchange),
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=5,
+            )
+            if resp.status_code != 200:
+                continue
 
-    # Fallback: Yahoo Finance
-    return _fetch_yahoo_batch(enabled)
+            data = resp.json()
+            # Build a map from TV_SYMBOL -> TwelveData symbol for compatibility
+            tv_to_td = {i.TV_SYMBOL: i.TWELVEDATA_SYMBOL for i in insts}
 
+            for item in data.get("data", []):
+                tv_sym = item["s"]
+                close_price = item["d"][0]
+                if close_price and tv_sym in tv_to_td:
+                    prices[tv_to_td[tv_sym]] = float(close_price)
+
+        except Exception as e:
+            logger.error(f"TradingView scan error ({exchange}): {e}")
+
+    return prices
+
+
+# ---------------------------------------------------------------------------
+# TwelveData (secondary - requires API key, 800 req/day)
+# ---------------------------------------------------------------------------
 
 def _fetch_twelvedata_batch(instruments: list) -> dict:
     """Batch fetch from Twelve Data API."""
@@ -115,12 +147,10 @@ def _fetch_twelvedata_batch(instruments: list) -> dict:
         if "code" in data:
             code = data.get("code")
             if code == 429:
-                # Rate limit hit
                 credit_tracker.mark_exhausted()
-                logger.warning("Twelve Data rate limit hit, switching to Yahoo Finance")
+                logger.warning("Twelve Data rate limit hit")
             return {}
 
-        # Track credits used (1 per symbol)
         credit_tracker.use_credits(len(td_symbols))
 
         prices = {}
@@ -142,8 +172,12 @@ def _fetch_twelvedata_batch(instruments: list) -> dict:
         return {}
 
 
+# ---------------------------------------------------------------------------
+# Yahoo Finance (last resort fallback - futures prices, not spot)
+# ---------------------------------------------------------------------------
+
 def _fetch_yahoo_batch(instruments: list) -> dict:
-    """Fetch prices from Yahoo Finance direct API (fallback)."""
+    """Fetch prices from Yahoo Finance (fallback - futures, not spot)."""
     prices = {}
     for inst in instruments:
         try:
@@ -174,12 +208,63 @@ def _fetch_yahoo_batch(instruments: list) -> dict:
     return prices
 
 
+# ---------------------------------------------------------------------------
+# Main batch fetch: TradingView -> TwelveData -> Yahoo
+# ---------------------------------------------------------------------------
+
+def fetch_all_prices_batch(instruments: list) -> dict:
+    """
+    Fetch prices for ALL instruments.
+    Priority: TradingView (spot, free) -> TwelveData -> Yahoo (futures).
+    Fills missing instruments from lower-priority sources.
+    Returns dict: { 'XAU/USD': price, 'EUR/USD': price, ... }
+    """
+    enabled = [i for i in instruments if i.ENABLED]
+    if not enabled:
+        return {}
+
+    all_prices = {}
+    source = "Yahoo"
+
+    # 1. TradingView (primary - spot prices, free, no limits)
+    tv_instruments = [i for i in enabled if i.TV_SYMBOL]
+    if tv_instruments:
+        tv_prices = _fetch_tradingview_batch(tv_instruments)
+        if tv_prices:
+            all_prices.update(tv_prices)
+            source = "TradingView"
+
+    # Find instruments still missing a price
+    missing = [i for i in enabled if i.TWELVEDATA_SYMBOL not in all_prices]
+
+    # 2. TwelveData (secondary - for missing instruments)
+    if missing and TWELVEDATA_API_KEY and not credit_tracker.is_exhausted:
+        td_instruments = [i for i in missing if i.TWELVEDATA_SYMBOL]
+        if td_instruments:
+            td_prices = _fetch_twelvedata_batch(td_instruments)
+            if td_prices:
+                all_prices.update(td_prices)
+                if not source or source == "Yahoo":
+                    source = "TwelveData"
+
+    # Find instruments still missing
+    missing = [i for i in enabled if i.TWELVEDATA_SYMBOL not in all_prices]
+
+    # 3. Yahoo Finance (last resort - for remaining missing instruments)
+    if missing:
+        yahoo_prices = _fetch_yahoo_batch(missing)
+        if yahoo_prices:
+            all_prices.update(yahoo_prices)
+
+    credit_tracker.set_source(source)
+    return all_prices
+
+
 class MarketFetcher:
-    """Fetches live prices via Twelve Data / Yahoo Finance, candles via yfinance."""
+    """Fetches live prices via TradingView/TwelveData/Yahoo, candles via yfinance."""
 
     def __init__(self, instrument: InstrumentConfig):
         self.instrument = instrument
-        # Cache
         self._last_price: float = 0
         self._last_prev_close: float = 0
         self._last_change: float = 0
@@ -207,33 +292,38 @@ class MarketFetcher:
                 "change": self._last_change,
                 "change_pct": self._last_change_pct,
             }
-        # First call - fetch individually to get prev_close
         return self._fetch_initial()
 
     def _fetch_initial(self) -> dict:
         """Fetch price + prev_close at startup."""
-        td_symbol = self.instrument.TWELVEDATA_SYMBOL
-
-        # Try Twelve Data /quote for prev_close
-        if td_symbol and TWELVEDATA_API_KEY and not credit_tracker.is_exhausted:
+        # Try TradingView first for current price
+        tv_sym = self.instrument.TV_SYMBOL
+        if tv_sym:
             try:
-                resp = requests.get(
-                    "https://api.twelvedata.com/quote",
-                    params={"symbol": td_symbol, "apikey": TWELVEDATA_API_KEY},
+                exchange = self.instrument.TV_EXCHANGE or "cfd"
+                payload = {
+                    "symbols": {"tickers": [tv_sym]},
+                    "columns": ["close", "prev_close_price"],
+                }
+                resp = requests.post(
+                    TRADINGVIEW_SCAN_URL.format(exchange=exchange),
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
                     timeout=5,
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    if "code" not in data:
-                        credit_tracker.use_credits(1)
-                        price = float(data.get("close", 0))
-                        prev_close = float(data.get("previous_close", 0))
+                    items = data.get("data", [])
+                    if items:
+                        vals = items[0]["d"]
+                        price = float(vals[0]) if vals[0] else 0
+                        prev = float(vals[1]) if vals[1] else 0
                         if price:
-                            return self._update_and_return(price, prev_close)
+                            return self._update_and_return(price, prev or price)
             except Exception:
                 pass
 
-        # Fallback: Yahoo Finance
+        # Fallback: Yahoo Finance for prev_close
         try:
             ticker = yf.Ticker(self.instrument.SYMBOL)
             df = ticker.history(period="5d", interval="1d")

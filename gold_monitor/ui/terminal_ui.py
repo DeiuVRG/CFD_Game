@@ -1,4 +1,5 @@
 import os
+import sys
 from datetime import datetime
 from typing import Optional
 
@@ -28,15 +29,15 @@ class TerminalUI:
         os.system("cls" if os.name == "nt" else "clear")
 
     @staticmethod
-    def display_multi(monitors, position_tracker, results: dict):
+    def display_multi(monitors, position_tracker, results: dict, retrain_status: str = ""):
         """Display dashboard for all monitored instruments."""
         TerminalUI.clear()
         now = datetime.utcnow().strftime("%H:%M:%S UTC")
         w = 62
 
-        print(f"{C.CYAN}{'═' * w}{C.RESET}")
-        print(f"{C.BOLD}{C.CYAN}  TRADING MONITOR  │  MULTI-INSTRUMENT  │  LIVE  │  {now}{C.RESET}")
-        print(f"{C.CYAN}{'═' * w}{C.RESET}")
+        print(f"{C.CYAN}{'=' * w}{C.RESET}")
+        print(f"{C.BOLD}{C.CYAN}  TRADING MONITOR  |  MULTI-INSTRUMENT  |  LIVE  |  {now}{C.RESET}")
+        print(f"{C.CYAN}{'=' * w}{C.RESET}")
 
         for mon in monitors:
             res = results.get(mon.display_name, {})
@@ -46,11 +47,11 @@ class TerminalUI:
             # Price color
             if mon.change >= 0:
                 price_color = C.GREEN
-                arrow = "▲"
+                arrow = "^"
                 sign = "+"
             else:
                 price_color = C.RED
-                arrow = "▼"
+                arrow = "v"
                 sign = ""
 
             # Detect forex (more decimals)
@@ -67,8 +68,8 @@ class TerminalUI:
             # Indicators
             rsi_color = C.RED if mon.rsi > 70 else C.GREEN if mon.rsi < 30 else C.WHITE
             print(
-                f"  RSI: {rsi_color}{mon.rsi:>5.1f}{C.RESET}  │  "
-                f"MACD: {C.GREEN if mon.macd_hist > 0 else C.RED}{mon.macd_hist:>+.4f}{C.RESET}  │  "
+                f"  RSI: {rsi_color}{mon.rsi:>5.1f}{C.RESET}  |  "
+                f"MACD: {C.GREEN if mon.macd_hist > 0 else C.RED}{mon.macd_hist:>+.4f}{C.RESET}  |  "
                 f"AI: {'OK' if mon.ai_ready else 'N/A'}"
             )
 
@@ -90,7 +91,7 @@ class TerminalUI:
 
                 print(
                     f"  {sig_bg}{C.BOLD}{C.WHITE} {sig_text} {C.RESET}  "
-                    f"Conf: {conf:.0%}  │  SL: {sl_fmt}  │  TP: {tp_fmt}  │  R:R 1:{rr:.1f}"
+                    f"Conf: {conf:.0%}  |  SL: {sl_fmt}  |  TP: {tp_fmt}  |  R:R 1:{rr:.1f}"
                 )
             else:
                 print(f"  {C.DIM}Niciun semnal activ{C.RESET}")
@@ -102,7 +103,7 @@ class TerminalUI:
                 pnl_color = C.GREEN if pnl > 0 else C.RED
                 pnl_sign = "+" if pnl > 0 else ""
                 print(
-                    f"  {C.BOLD}Pozitie deschisa:{C.RESET} {pos.direction}  │  "
+                    f"  {C.BOLD}Pozitie deschisa:{C.RESET} {pos.direction}  |  "
                     f"P&L: {pnl_color}{pnl_sign}{pnl:.2f}%{C.RESET}"
                 )
 
@@ -112,27 +113,42 @@ class TerminalUI:
             if close_sent:
                 print(f"  {C.YELLOW}Discord: Pozitie inchisa!{C.RESET}")
 
-            print(f"  {C.CYAN}{'─' * (w - 2)}{C.RESET}")
+            print(f"  {C.CYAN}{'-' * (w - 2)}{C.RESET}")
 
         # Stats
         stats = position_tracker.get_stats()
         if stats["total"] > 0:
             print(
                 f"\n  {C.BOLD}Statistici:{C.RESET} "
-                f"{stats['total']} trade-uri  │  "
-                f"{C.GREEN}W: {stats['wins']}{C.RESET}  │  "
-                f"{C.RED}L: {stats['losses']}{C.RESET}  │  "
-                f"WR: {stats['win_rate']:.0%}  │  "
+                f"{stats['total']} trade-uri  |  "
+                f"{C.GREEN}W: {stats['wins']}{C.RESET}  |  "
+                f"{C.RED}L: {stats['losses']}{C.RESET}  |  "
+                f"WR: {stats['win_rate']:.0%}  |  "
                 f"P&L: {stats.get('total_pnl_pct', 0):+.2f}%"
             )
 
-        # Data source info
+        # Keyboard commands
+        has_open = any(
+            position_tracker.get_position(mon.display_name) is not None
+            for mon in monitors
+        )
+        if has_open:
+            print(
+                f"\n  {C.BOLD}{C.YELLOW}Comenzi:{C.RESET} "
+                f"{C.GREEN}[Ctrl+W]{C.RESET} Inchide pe PROFIT  |  "
+                f"{C.RED}[Ctrl+L]{C.RESET} Inchide pe LOSS"
+            )
+
+        # Data source + AI retrain info
         from data.gold_fetcher import credit_tracker
         src = credit_tracker.source_name
-        remaining = credit_tracker.credits_remaining
-        src_color = C.GREEN if src == "TwelveData" else C.YELLOW
+        src_color = C.GREEN if src == "TradingView" else C.YELLOW
+        retrain_info = ""
+        if retrain_status:
+            rt_color = C.YELLOW if "Training" in retrain_status else C.GREEN
+            retrain_info = f"  |  AI: {rt_color}{retrain_status}{C.RESET}{C.DIM}"
         print(
             f"\n  {C.DIM}Sursa: {src_color}{src}{C.RESET}"
-            f"{C.DIM} ({remaining} credite ramase)  │  Ctrl+C pentru a opri{C.RESET}"
+            f"{C.DIM} (spot){retrain_info}  |  Ctrl+C pentru a opri{C.RESET}"
         )
-        print(f"{C.CYAN}{'═' * w}{C.RESET}")
+        print(f"{C.CYAN}{'=' * w}{C.RESET}")
