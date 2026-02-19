@@ -1,6 +1,6 @@
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from engine.signal import Signal
@@ -30,14 +30,20 @@ class TerminalUI:
 
     @staticmethod
     def display_multi(monitors, position_tracker, results: dict, retrain_status: str = ""):
-        """Display dashboard for all monitored instruments."""
         TerminalUI.clear()
-        now = datetime.utcnow().strftime("%H:%M:%S UTC")
-        w = 62
+        now = datetime.now(timezone.utc).strftime("%H:%M:%S UTC")
+        w = 66
 
         print(f"{C.CYAN}{'=' * w}{C.RESET}")
-        print(f"{C.BOLD}{C.CYAN}  TRADING MONITOR  |  MULTI-INSTRUMENT  |  LIVE  |  {now}{C.RESET}")
+        print(f"{C.BOLD}{C.CYAN}  TRADING MONITOR v2  |  MULTI-INSTRUMENT  |  LIVE  |  {now}{C.RESET}")
         print(f"{C.CYAN}{'=' * w}{C.RESET}")
+
+        # Session status
+        session_active = getattr(monitors[0], 'session_active', True) if monitors else True
+        if session_active:
+            print(f"  {C.GREEN}SESSION: ACTIVA (08:00-20:00 UTC){C.RESET}")
+        else:
+            print(f"  {C.RED}SESSION: INACTIVA (nu se deschid pozitii noi){C.RESET}")
 
         for mon in monitors:
             res = results.get(mon.display_name, {})
@@ -54,7 +60,6 @@ class TerminalUI:
                 arrow = "v"
                 sign = ""
 
-            # Detect forex (more decimals)
             is_forex = "USD" in mon.display_name and "XAU" not in mon.display_name
             price_fmt = f"{mon.price:.5f}" if is_forex else f"${mon.price:,.2f}"
             change_fmt = f"{sign}{mon.change:.5f}" if is_forex else f"{sign}{mon.change:,.2f}"
@@ -65,11 +70,20 @@ class TerminalUI:
                 f"{price_color}{arrow} {change_fmt} ({sign}{mon.change_pct:.2f}%){C.RESET}"
             )
 
-            # Indicators
+            # Indicators + regime
             rsi_color = C.RED if mon.rsi > 70 else C.GREEN if mon.rsi < 30 else C.WHITE
+            adx = getattr(mon, 'adx', 0)
+            if adx >= 25:
+                regime = f"{C.GREEN}TREND{C.RESET}"
+            elif adx >= 20:
+                regime = f"{C.YELLOW}MODERAT{C.RESET}"
+            else:
+                regime = f"{C.RED}LATERAL{C.RESET}"
+
             print(
                 f"  RSI: {rsi_color}{mon.rsi:>5.1f}{C.RESET}  |  "
                 f"MACD: {C.GREEN if mon.macd_hist > 0 else C.RED}{mon.macd_hist:>+.4f}{C.RESET}  |  "
+                f"ADX: {adx:>4.1f} ({regime})  |  "
                 f"AI: {'OK' if mon.ai_ready else 'N/A'}"
             )
 
@@ -96,15 +110,22 @@ class TerminalUI:
             else:
                 print(f"  {C.DIM}Niciun semnal activ{C.RESET}")
 
-            # Open position
+            # Open position + trailing SL info
             pos = position_tracker.get_position(mon.display_name)
             if pos:
                 pnl = pos.unrealized_pnl_pct(mon.price)
                 pnl_color = C.GREEN if pnl > 0 else C.RED
                 pnl_sign = "+" if pnl > 0 else ""
+
+                trail_info = ""
+                if pos.trailing_activated:
+                    trail_info = f"  |  {C.CYAN}TRAILING SL{C.RESET}"
+
+                sl_fmt_pos = f"{pos.stop_loss:.5f}" if is_forex else f"${pos.stop_loss:,.2f}"
                 print(
-                    f"  {C.BOLD}Pozitie deschisa:{C.RESET} {pos.direction}  |  "
-                    f"P&L: {pnl_color}{pnl_sign}{pnl:.2f}%{C.RESET}"
+                    f"  {C.BOLD}Pozitie:{C.RESET} {pos.direction}  |  "
+                    f"P&L: {pnl_color}{pnl_sign}{pnl:.2f}%{C.RESET}  |  "
+                    f"SL: {sl_fmt_pos}{trail_info}"
                 )
 
             # Discord status
@@ -139,7 +160,7 @@ class TerminalUI:
                 f"{C.RED}[Ctrl+L]{C.RESET} Inchide pe LOSS"
             )
 
-        # Data source + AI retrain info
+        # Footer: data source + retrain info
         from data.gold_fetcher import credit_tracker
         src = credit_tracker.source_name
         src_color = C.GREEN if src == "TradingView" else C.YELLOW
@@ -149,6 +170,6 @@ class TerminalUI:
             retrain_info = f"  |  AI: {rt_color}{retrain_status}{C.RESET}{C.DIM}"
         print(
             f"\n  {C.DIM}Sursa: {src_color}{src}{C.RESET}"
-            f"{C.DIM} (spot){retrain_info}  |  Ctrl+C pentru a opri{C.RESET}"
+            f"{C.DIM} (spot){retrain_info}  |  Ctrl+C = stop{C.RESET}"
         )
         print(f"{C.CYAN}{'=' * w}{C.RESET}")

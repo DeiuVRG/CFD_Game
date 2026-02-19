@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
 
+from config.settings import STRATEGY
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,7 +20,19 @@ class TrackedPosition:
     opened_at: datetime = field(default_factory=datetime.utcnow)
     closed_at: Optional[datetime] = None
     close_price: Optional[float] = None
-    close_reason: Optional[str] = None  # "TP_HIT", "SL_HIT", "SIGNAL_REVERSED"
+    close_reason: Optional[str] = None
+    # Trailing SL state
+    highest_price: float = 0.0    # For BUY positions
+    lowest_price: float = 999999  # For SELL positions
+    trailing_activated: bool = False
+    original_sl: float = 0.0
+
+    def __post_init__(self):
+        self.original_sl = self.stop_loss
+        if self.direction == "BUY":
+            self.highest_price = self.entry_price
+        else:
+            self.lowest_price = self.entry_price
 
     @property
     def is_open(self) -> bool:
@@ -26,7 +40,6 @@ class TrackedPosition:
 
     @property
     def pnl_pct(self) -> float:
-        """Calculate P&L percentage if closed."""
         if self.close_price is None:
             return 0.0
         if self.direction == "BUY":
@@ -40,12 +53,41 @@ class TrackedPosition:
         else:
             return (self.entry_price - current_price) / self.entry_price * 100
 
+    def update_trailing_sl(self, current_price: float, atr: float = 0):
+        """Update trailing stop loss if enabled and conditions met."""
+        if not STRATEGY.TRAILING_SL_ENABLED or atr <= 0:
+            return
+
+        pnl = self.unrealized_pnl_pct(current_price)
+
+        # Activate trailing after minimum profit threshold
+        if pnl < STRATEGY.TRAILING_SL_ACTIVATION * 100:
+            return
+
+        self.trailing_activated = True
+        trail_dist = atr * STRATEGY.TRAILING_SL_DISTANCE
+
+        if self.direction == "BUY":
+            if current_price > self.highest_price:
+                self.highest_price = current_price
+            new_sl = self.highest_price - trail_dist
+            if new_sl > self.stop_loss:
+                self.stop_loss = new_sl
+                logger.debug(f"Trailing SL updated: {self.instrument} SL -> {new_sl:.5f}")
+
+        else:  # SELL
+            if current_price < self.lowest_price:
+                self.lowest_price = current_price
+            new_sl = self.lowest_price + trail_dist
+            if new_sl < self.stop_loss:
+                self.stop_loss = new_sl
+                logger.debug(f"Trailing SL updated: {self.instrument} SL -> {new_sl:.5f}")
+
 
 class PositionTracker:
-    """Tracks open positions per instrument and detects SL/TP hits."""
+    """Tracks open positions with trailing SL and EOD close support."""
 
     def __init__(self):
-        # instrument_display -> TrackedPosition
         self._positions: dict[str, TrackedPosition] = {}
         self._history: list[TrackedPosition] = []
 
@@ -61,7 +103,6 @@ class PositionTracker:
 
     def open_position(self, instrument: str, direction: str, entry_price: float,
                       stop_loss: float, take_profit: float, strategy_name: str) -> TrackedPosition:
-        """Open a new tracked position (closes any existing one first)."""
         if self.has_position(instrument):
             self.close_position(instrument, entry_price, "SIGNAL_REVERSED")
 
@@ -79,7 +120,6 @@ class PositionTracker:
 
     def close_position(self, instrument: str, close_price: float,
                        reason: str) -> Optional[TrackedPosition]:
-        """Close an existing position."""
         pos = self._positions.get(instrument)
         if pos is None or not pos.is_open:
             return None
@@ -94,27 +134,53 @@ class PositionTracker:
         )
         return pos
 
-    def check_sl_tp(self, instrument: str, current_price: float) -> Optional[TrackedPosition]:
-        """Check if current price hit SL or TP. Returns closed position if hit."""
+    def check_sl_tp(self, instrument: str, current_price: float,
+                    atr: float = 0) -> Optional[TrackedPosition]:
+        """Check SL/TP. Also updates trailing SL."""
         pos = self.get_position(instrument)
         if pos is None:
             return None
 
+        # Update trailing SL first
+        pos.update_trailing_sl(current_price, atr)
+
         if pos.direction == "BUY":
             if current_price <= pos.stop_loss:
-                return self.close_position(instrument, current_price, "SL_HIT")
+                reason = "TRAILING_SL_HIT" if pos.trailing_activated else "SL_HIT"
+                return self.close_position(instrument, current_price, reason)
             if current_price >= pos.take_profit:
                 return self.close_position(instrument, current_price, "TP_HIT")
         else:  # SELL
             if current_price >= pos.stop_loss:
-                return self.close_position(instrument, current_price, "SL_HIT")
+                reason = "TRAILING_SL_HIT" if pos.trailing_activated else "SL_HIT"
+                return self.close_position(instrument, current_price, reason)
             if current_price <= pos.take_profit:
                 return self.close_position(instrument, current_price, "TP_HIT")
 
         return None
 
+    def check_eod_close(self) -> list:
+        """Close all positions at end of day. Returns list of closed positions."""
+        now = datetime.utcnow()
+        if now.hour < STRATEGY.EOD_CLOSE_UTC:
+            return []
+
+        closed = []
+        for instrument in list(self._positions.keys()):
+            pos = self.get_position(instrument)
+            if pos is None:
+                continue
+
+            # Use last known price (entry as fallback)
+            price = pos.entry_price  # Will be updated by engine before calling this
+            result = self.close_position(instrument, price, "EOD_CLOSE")
+            if result:
+                closed.append(result)
+                logger.info(f"EOD close: {instrument}")
+
+        return closed
+
     def get_stats(self) -> dict:
-        """Get overall trading statistics."""
         if not self._history:
             return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0.0}
 

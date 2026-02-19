@@ -56,11 +56,11 @@ class AIStrategy(BaseStrategy):
         if signal_val == 1:  # BUY
             direction = "BUY"
             sl = price - (atr * STRATEGY.SCALP_ATR_SL)
-            tp = price + (atr * 2.0)
+            tp = price + (atr * STRATEGY.SCALP_ATR_TP)
         else:  # SELL
             direction = "SELL"
             sl = price + (atr * STRATEGY.SCALP_ATR_SL)
-            tp = price - (atr * 2.0)
+            tp = price - (atr * STRATEGY.SCALP_ATR_TP)
 
         logger.info(
             f"[AI] {direction} signal on {epic} | "

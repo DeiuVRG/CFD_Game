@@ -19,6 +19,8 @@ class InstrumentConfig:
     TRAIN_PERIOD: str = "2y"
     TRAIN_INTERVAL: str = "1h"
     PRICE_CHANGE_THRESHOLD: float = 0.005
+    SPREAD_PIPS: float = 3.0   # Typical spread in pips (for cost modeling)
+    PIP_VALUE: float = 0.01    # Value of 1 pip in price units
     ENABLED: bool = True
 
 
@@ -35,6 +37,8 @@ INSTRUMENTS = [
         TV_SYMBOL="OANDA:XAUUSD",
         TV_EXCHANGE="cfd",
         PRICE_CHANGE_THRESHOLD=0.005,
+        SPREAD_PIPS=3.0,     # XTB Gold spread ~3 pips ($0.30)
+        PIP_VALUE=0.10,      # Gold: 1 pip = $0.10
     ),
     InstrumentConfig(
         SYMBOL="EURUSD=X",
@@ -44,6 +48,9 @@ INSTRUMENTS = [
         TV_SYMBOL="FX:EURUSD",
         TV_EXCHANGE="forex",
         PRICE_CHANGE_THRESHOLD=0.002,
+        SPREAD_PIPS=1.2,     # XTB EUR/USD spread ~1.2 pips
+        PIP_VALUE=0.0001,    # Forex: 1 pip = 0.0001
+        ENABLED=False,       # Disabled: optimizer found no edge (+0.41%, Sharpe 0.14)
     ),
     InstrumentConfig(
         SYMBOL="GBPUSD=X",
@@ -53,6 +60,8 @@ INSTRUMENTS = [
         TV_SYMBOL="FX:GBPUSD",
         TV_EXCHANGE="forex",
         PRICE_CHANGE_THRESHOLD=0.002,
+        SPREAD_PIPS=1.5,
+        PIP_VALUE=0.0001,
         ENABLED=False,
     ),
 ]
@@ -60,7 +69,7 @@ INSTRUMENTS = [
 
 @dataclass
 class MonitorConfig:
-    FETCH_INTERVAL_SEC: int = 10  # 10 sec (batch request = 1 call for all instruments)
+    FETCH_INTERVAL_SEC: int = 10  # 10 sec (TradingView is free)
     ANALYSIS_INTERVAL_SEC: int = 60
     CANDLE_LOOKBACK: int = 100
 
@@ -76,24 +85,22 @@ class DiscordConfig:
 
 @dataclass
 class AIConfig:
-    CONFIDENCE_THRESHOLD: float = 0.55
+    CONFIDENCE_THRESHOLD: float = 0.60  # Optimized: 0.60 for Gold
     PREDICTION_HORIZON: int = 6
     PRICE_CHANGE_THRESHOLD: float = 0.005
-    N_ESTIMATORS: int = 200
-    MAX_DEPTH: int = 6
-    LEARNING_RATE: float = 0.1
+    N_ESTIMATORS: int = 150
+    MAX_DEPTH: int = 4
+    LEARNING_RATE: float = 0.05
     FEATURE_NAMES: list = None
 
     def __post_init__(self):
         if self.FEATURE_NAMES is None:
-            self.FEATURE_NAMES = [
-                "rsi_14", "rsi_7", "macd_hist", "macd_signal_dist",
-                "bb_position", "bb_width", "atr_14", "ema_ratio",
-                "price_change_5", "price_change_10", "price_change_30",
-                "high_low_range", "close_vs_open", "volume_change",
-                "hour_sin", "hour_cos", "day_of_week",
-                "upper_shadow", "lower_shadow", "consecutive_direction",
-            ]
+            # Lazy import to avoid circular dependency
+            try:
+                from ai.feature_engineer import FeatureEngineer
+                self.FEATURE_NAMES = FeatureEngineer.FEATURE_NAMES
+            except ImportError:
+                self.FEATURE_NAMES = []
 
 
 @dataclass
@@ -104,7 +111,8 @@ class StrategyConfig:
     SCALP_RSI_OVERBOUGHT: float = 70.0
     SCALP_BB_PERIOD: int = 20
     SCALP_BB_STD: float = 2.0
-    SCALP_ATR_SL: float = 1.5
+    SCALP_ATR_SL: float = 1.5  # Optimized: 1.5x ATR stop loss
+    SCALP_ATR_TP: float = 3.0  # Optimized: 3.0x ATR take profit
 
     # Momentum (15 min)
     MOM_EMA_FAST: int = 9
@@ -112,8 +120,8 @@ class StrategyConfig:
     MOM_MACD_FAST: int = 12
     MOM_MACD_SLOW: int = 26
     MOM_MACD_SIGNAL: int = 9
-    MOM_ATR_SL: float = 2.0
-    MOM_ATR_TP: float = 3.0
+    MOM_ATR_SL: float = 1.5   # Optimized: aligned with SL=1.5
+    MOM_ATR_TP: float = 3.0   # Optimized: aligned with TP=3.0
 
     # Voting weights
     AI_WEIGHT: float = 0.50
@@ -121,9 +129,39 @@ class StrategyConfig:
     MOMENTUM_WEIGHT: float = 0.25
     VOTE_THRESHOLD: float = 0.35
 
+    # Session filter (UTC hours) - London+NY overlap
+    SESSION_START_UTC: int = 8    # 08:00 UTC (London open)
+    SESSION_END_UTC: int = 20     # 20:00 UTC (NY close)
+
+    # Auto-close positions before end of day
+    EOD_CLOSE_UTC: int = 21       # Force close at 21:00 UTC
+
+    # Trailing stop loss
+    TRAILING_SL_ENABLED: bool = True
+    TRAILING_SL_ACTIVATION: float = 0.3  # Activate after 0.3% profit
+    TRAILING_SL_DISTANCE: float = 1.0    # Trail at 1x ATR distance
+
+    # Regime filter - Optimized: ADX >= 25 required to trade
+    REGIME_ADX_THRESHOLD: float = 25.0   # ADX < 25 = no new trades
+    REGIME_ADX_TRENDING: float = 25.0    # ADX >= 25 = trending (OK to trade)
+
+
+@dataclass
+class CostConfig:
+    """Transaction cost modeling for realistic backtesting."""
+    COMMISSION_PCT: float = 0.0    # XTB CFDs: no commission (spread only)
+    SLIPPAGE_MULTIPLIER: float = 0.5  # Slippage = 0.5x spread on fast markets
+
+    def get_total_cost_pct(self, instrument: InstrumentConfig, price: float) -> float:
+        """Total round-trip cost as percentage of price."""
+        spread_cost = (instrument.SPREAD_PIPS * instrument.PIP_VALUE) / price
+        slippage = spread_cost * self.SLIPPAGE_MULTIPLIER
+        return (spread_cost + slippage + self.COMMISSION_PCT) * 2  # *2 for round-trip
+
 
 # Global instances
 MONITOR = MonitorConfig()
 DISCORD = DiscordConfig()
 AI = AIConfig()
 STRATEGY = StrategyConfig()
+COSTS = CostConfig()

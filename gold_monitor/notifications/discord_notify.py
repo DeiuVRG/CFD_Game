@@ -15,7 +15,7 @@ class DiscordNotifier:
 
     def __init__(self):
         self.webhook_url = DISCORD.WEBHOOK_URL
-        self._last_signal_direction: dict[str, str] = {}  # per instrument
+        self._last_signal_direction: dict[str, str] = {}
 
     def _post(self, payload: dict) -> bool:
         if not self.webhook_url:
@@ -23,11 +23,7 @@ class DiscordNotifier:
             return False
 
         try:
-            resp = requests.post(
-                self.webhook_url,
-                json=payload,
-                timeout=10,
-            )
+            resp = requests.post(self.webhook_url, json=payload, timeout=10)
             if resp.status_code in (200, 204):
                 return True
             logger.error(f"Discord webhook failed: {resp.status_code} {resp.text[:200]}")
@@ -38,7 +34,6 @@ class DiscordNotifier:
 
     def send_signal(self, signal: Signal, confidence: float = 0,
                     probabilities: dict = None) -> bool:
-        """Send a BUY/SELL signal to Discord with a rich embed."""
         instrument_key = signal.epic
 
         if DISCORD.NOTIFY_ON_SIGNAL_CHANGE:
@@ -54,7 +49,6 @@ class DiscordNotifier:
         rr = signal.risk_reward_ratio
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        # Format prices based on instrument type
         is_forex = "USD" in signal.epic and "XAU" not in signal.epic
         fmt = "5f" if is_forex else ",.2f"
 
@@ -75,7 +69,7 @@ class DiscordNotifier:
             "title": f"{emoji} {action} {signal.epic}",
             "color": color,
             "fields": fields,
-            "footer": {"text": f"\u23f0 {now}"},
+            "footer": {"text": f"\u23f0 {now} | Trailing SL activ"},
         }
 
         payload = {
@@ -90,11 +84,14 @@ class DiscordNotifier:
         return success
 
     def send_close_signal(self, position: TrackedPosition) -> bool:
-        """Send a position CLOSE notification to Discord."""
         reason_map = {
             "TP_HIT": ("\U0001f3af TARGET ATINS!", 0x00FF00, "Profit realizat!"),
             "SL_HIT": ("\U0001f6d1 STOP LOSS ATINS!", 0xFF0000, "Pierdere limitata."),
+            "TRAILING_SL_HIT": ("\U0001f4c8 TRAILING SL ATINS!", 0xFFAA00, "Profit protejat prin trailing stop!"),
             "SIGNAL_REVERSED": ("\U0001f504 SEMNAL INVERSAT!", 0xFFAA00, "Semnalul s-a schimbat."),
+            "EOD_CLOSE": ("\U0001f319 INCHIDERE END-OF-DAY!", 0x888888, "Pozitia nu ramane peste noapte."),
+            "MANUAL_WIN": ("\u2705 INCHIS MANUAL - PROFIT!", 0x00FF00, "Inchis manual pe profit."),
+            "MANUAL_LOSS": ("\u274c INCHIS MANUAL - PIERDERE!", 0xFF0000, "Inchis manual pe pierdere."),
         }
 
         title, color, desc = reason_map.get(
@@ -150,38 +147,20 @@ class DiscordNotifier:
             )
         return success
 
-    def send_status(self, price: float, change: float, change_pct: float,
-                    instrument: str = "XAU/USD") -> bool:
-        """Send a periodic price status update."""
-        emoji = "\u2b06\ufe0f" if change >= 0 else "\u2b07\ufe0f"
-        sign = "+" if change >= 0 else ""
-        color = 0x00AA00 if change >= 0 else 0xAA0000
-
-        embed = {
-            "title": f"\U0001f4c8 {instrument} Status Update",
-            "color": color,
-            "fields": [
-                {"name": "Pret", "value": f"${price:,.2f}", "inline": True},
-                {"name": "Schimbare", "value": f"{emoji} {sign}{change:,.2f} ({sign}{change_pct:.2f}%)", "inline": True},
-            ],
-            "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")},
-        }
-
-        return self._post({"username": DISCORD.BOT_NAME, "content": DISCORD.MENTION_TAG, "embeds": [embed]})
-
     def send_test(self) -> bool:
-        """Send a test message to verify webhook works."""
         from config.settings import INSTRUMENTS
         instruments_str = ", ".join(i.SYMBOL_DISPLAY for i in INSTRUMENTS if i.ENABLED)
 
         embed = {
-            "title": "\u2705 Trading Monitor - Test Message",
-            "description": f"Monitorizare activa pentru: {instruments_str}",
+            "title": "\u2705 Trading Monitor v2 - Test Message",
+            "description": (
+                f"Monitorizare activa: {instruments_str}\n"
+                f"Features: Walk-forward AI, Trailing SL, Session filter, Regime detection"
+            ),
             "color": 0x00AAFF,
             "fields": [
                 {"name": "Status", "value": "Conectat", "inline": True},
-                {"name": "Instrumente", "value": str(sum(1 for i in INSTRUMENTS if i.ENABLED)), "inline": True},
-                {"name": "Mod", "value": "Test", "inline": True},
+                {"name": "Versiune", "value": "v2.0", "inline": True},
             ],
             "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")},
         }

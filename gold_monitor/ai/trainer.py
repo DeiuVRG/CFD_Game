@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 def train_instrument(instrument: InstrumentConfig) -> bool:
     """Train XGBoost model for a single instrument."""
-    print(f"\n{'=' * 55}")
+    print(f"\n{'=' * 60}")
     print(f"  Training: {instrument.SYMBOL_DISPLAY} ({instrument.SYMBOL})")
-    print(f"{'=' * 55}")
+    print(f"{'=' * 60}")
 
     # Step 1: Download data
     print(f"\n[1/5] Downloading {instrument.TRAIN_PERIOD} of price data...")
@@ -24,7 +24,7 @@ def train_instrument(instrument: InstrumentConfig) -> bool:
     df = fetcher.get_training_data()
 
     if df.empty:
-        print(f"ERROR: Could not download training data for {instrument.SYMBOL}!")
+        print(f"ERROR: Could not download data for {instrument.SYMBOL}!")
         return False
 
     print(f"  Downloaded {len(df)} candles")
@@ -32,7 +32,7 @@ def train_instrument(instrument: InstrumentConfig) -> bool:
     print(f"  Price range: {df['close'].min():.5f} - {df['close'].max():.5f}")
 
     # Step 2: Create features
-    print("\n[2/5] Engineering features...")
+    print("\n[2/5] Engineering features (v2: ADX, StochRSI, ATR ratio)...")
     features = FeatureEngineer.create_features(df)
     labels = FeatureEngineer.create_labels(
         df,
@@ -42,58 +42,70 @@ def train_instrument(instrument: InstrumentConfig) -> bool:
 
     valid_mask = features.notna().all(axis=1) & labels.notna()
     features = features[valid_mask].reset_index(drop=True)
-    labels = labels[valid_mask].reset_index(drop=True)
+    labels = labels[valid_mask].reset_index(drop=True).astype(int)
 
     print(f"  Features: {features.shape[1]} columns, {len(features)} rows")
     print(f"  Label distribution:")
-    print(f"    BUY:  {(labels == 1).sum()} ({(labels == 1).mean()*100:.1f}%)")
-    print(f"    HOLD: {(labels == 0).sum()} ({(labels == 0).mean()*100:.1f}%)")
-    print(f"    SELL: {(labels == -1).sum()} ({(labels == -1).mean()*100:.1f}%)")
+    print(f"    BUY:  {(labels == 1).sum():>5} ({(labels == 1).mean()*100:.1f}%)")
+    print(f"    HOLD: {(labels == 0).sum():>5} ({(labels == 0).mean()*100:.1f}%)")
+    print(f"    SELL: {(labels == -1).sum():>5} ({(labels == -1).mean()*100:.1f}%)")
 
-    if len(features) < 100:
-        print(f"ERROR: Not enough training data ({len(features)} rows)!")
+    if len(features) < 200:
+        print(f"ERROR: Not enough data ({len(features)} rows, need 200+)!")
         return False
 
-    # Step 3: Train model
-    print("\n[3/5] Training XGBoost model...")
+    # Step 3: Train with walk-forward CV + class weights
+    print("\n[3/5] Training XGBoost (walk-forward CV, class-weighted)...")
     predictor = GoldPredictor(model_path=instrument.MODEL_PATH)
     metrics = predictor.train(features, labels)
 
-    # Step 4: Print results
+    # Step 4: Results
     print("\n[4/5] Results:")
-    print(f"  Accuracy: {metrics['accuracy']*100:.1f}%")
-    print(f"  Train size: {metrics['train_size']} | Test size: {metrics['test_size']}")
-    print(f"\n  Test set distribution:")
-    for cls, count in metrics["class_distribution"].items():
-        print(f"    {cls}: {count}")
+    print(f"  Holdout Test Accuracy: {metrics['accuracy']*100:.1f}%")
+    print(f"  Walk-Forward CV:       {metrics['cv_accuracy_mean']*100:.1f}% "
+          f"+/- {metrics['cv_accuracy_std']*100:.1f}%")
+
+    cv_accs = metrics.get("cv_accuracies", [])
+    if cv_accs:
+        fold_str = " | ".join(f"{a*100:.1f}%" for a in cv_accs)
+        print(f"  Per-fold accuracies:   [{fold_str}]")
+
+    print(f"  Train: {metrics['train_size']} | Test: {metrics['test_size']}")
 
     print(f"\n  Per-class performance:")
     for cls in ["SELL", "HOLD", "BUY"]:
         r = metrics["report"].get(cls, {})
         print(
-            f"    {cls:4s}: precision={r.get('precision', 0):.2f} "
-            f"recall={r.get('recall', 0):.2f} f1={r.get('f1-score', 0):.2f}"
+            f"    {cls:4s}: P={r.get('precision', 0):.2f} "
+            f"R={r.get('recall', 0):.2f} F1={r.get('f1-score', 0):.2f}"
         )
 
-    print(f"\n  Top 10 features:")
+    print(f"\n  Top features:")
     for name, imp in metrics["top_features"]:
         bar = "#" * int(imp * 100)
         print(f"    {name:25s} {imp:.4f} {bar}")
 
-    # Step 5: Save model
+    # Overfitting check
+    cv_mean = metrics["cv_accuracy_mean"]
+    test_acc = metrics["accuracy"]
+    diff = abs(test_acc - cv_mean)
+    if diff > 0.10:
+        print(f"\n  WARNING: Overfitting! Test ({test_acc:.1%}) vs CV ({cv_mean:.1%})")
+    else:
+        print(f"\n  Overfitting check: OK (diff={diff:.1%})")
+
+    # Step 5: Save
     print(f"\n[5/5] Saving model to {instrument.MODEL_PATH}...")
     predictor.save()
-    print("  Model saved successfully!")
-
-    print(f"\n  {instrument.SYMBOL_DISPLAY} training complete! Accuracy: {metrics['accuracy']*100:.1f}%")
+    print(f"  Done! Test={test_acc*100:.1f}% CV={cv_mean*100:.1f}%")
     return True
 
 
 def train_model(instrument_filter: str = None) -> bool:
-    """Train AI models for all enabled instruments (or a specific one)."""
-    print("=" * 55)
-    print("  AI Trainer - XGBoost (Multi-Instrument)")
-    print("=" * 55)
+    """Train AI models for all enabled instruments."""
+    print("=" * 60)
+    print("  AI Trainer v2 - Walk-Forward + Class Weights")
+    print("=" * 60)
 
     targets = [i for i in INSTRUMENTS if i.ENABLED]
     if instrument_filter:
@@ -112,14 +124,13 @@ def train_model(instrument_filter: str = None) -> bool:
         success = train_instrument(inst)
         results[inst.SYMBOL_DISPLAY] = success
 
-    # Summary
-    print(f"\n{'=' * 55}")
+    print(f"\n{'=' * 60}")
     print("  TRAINING SUMMARY")
-    print(f"{'=' * 55}")
+    print(f"{'=' * 60}")
     for name, ok in results.items():
         status = "OK" if ok else "FAILED"
         print(f"  {name}: {status}")
-    print(f"{'=' * 55}")
+    print(f"{'=' * 60}")
 
     return all(results.values())
 

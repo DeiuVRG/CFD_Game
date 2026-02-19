@@ -4,14 +4,14 @@ import os
 import sys
 import time
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import pandas as pd
 
 from ai.feature_engineer import FeatureEngineer
 from ai.model import GoldPredictor
-from config.settings import INSTRUMENTS, MONITOR, STRATEGY, AI, InstrumentConfig
+from config.settings import INSTRUMENTS, MONITOR, STRATEGY, AI, COSTS, InstrumentConfig
 from data.gold_fetcher import MarketFetcher, fetch_all_prices_batch
 from data.indicators import Indicators
 from engine.signal import Signal
@@ -47,6 +47,9 @@ class InstrumentMonitor:
         self.change_pct: float = 0
         self.rsi: float = 50.0
         self.macd_hist: float = 0.0
+        self.adx: float = 0.0
+        self.atr: float = 0.0
+        self.session_active: bool = True
 
     @property
     def display_name(self) -> str:
@@ -58,10 +61,9 @@ class InstrumentMonitor:
 
 
 class MonitorEngine:
-    """Main loop: monitors multiple instruments, tracks positions, notifies Discord."""
+    """Main loop with session filter, regime detection, trailing SL, and EOD close."""
 
-    # Re-train every 6 hours
-    RETRAIN_INTERVAL_SEC = 6 * 60 * 60
+    RETRAIN_INTERVAL_SEC = 6 * 60 * 60  # 6 hours
 
     def __init__(self):
         self.discord = DiscordNotifier()
@@ -72,7 +74,6 @@ class MonitorEngine:
         self._retrain_in_progress = False
         self.last_retrain_status: str = ""
 
-        # Create a monitor for each enabled instrument
         self.monitors: list[InstrumentMonitor] = []
         for inst in INSTRUMENTS:
             if inst.ENABLED:
@@ -90,40 +91,74 @@ class MonitorEngine:
                 writer.writerow([
                     "timestamp", "instrument", "direction", "price", "stop_loss",
                     "take_profit", "strategy", "confidence", "ai_buy_prob", "ai_sell_prob",
+                    "adx", "rsi", "session",
                 ])
 
-    def _log_signal(self, instrument: str, signal: Signal, confidence: float, probs: dict):
+    def _log_signal(self, instrument: str, signal: Signal, confidence: float,
+                    probs: dict, adx: float, rsi: float, session: bool):
         with open(self._signal_log_path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                datetime.utcnow().isoformat(),
-                instrument,
-                signal.direction,
-                signal.entry_price,
-                signal.stop_loss,
-                signal.take_profit,
-                signal.strategy_name,
-                round(confidence, 3),
-                probs.get("BUY", 0),
-                probs.get("SELL", 0),
+                datetime.utcnow().isoformat(), instrument, signal.direction,
+                signal.entry_price, signal.stop_loss, signal.take_profit,
+                signal.strategy_name, round(confidence, 3),
+                probs.get("BUY", 0), probs.get("SELL", 0),
+                round(adx, 1), round(rsi, 1), session,
             ])
+
+    @staticmethod
+    def _is_session_active() -> bool:
+        """Check if we're within trading session hours (London+NY overlap)."""
+        now = datetime.now(timezone.utc)
+        hour = now.hour
+        # Weekend check: Saturday=5, Sunday=6
+        if now.weekday() >= 5:
+            return False
+        return STRATEGY.SESSION_START_UTC <= hour < STRATEGY.SESSION_END_UTC
+
+    @staticmethod
+    def _get_market_regime(adx: float) -> str:
+        """Determine market regime from ADX."""
+        if adx >= STRATEGY.REGIME_ADX_TRENDING:
+            return "TRENDING"
+        elif adx >= STRATEGY.REGIME_ADX_THRESHOLD:
+            return "MODERATE"
+        else:
+            return "SIDEWAYS"
 
     def _vote_signals(
         self,
         ai_signal: Optional[Signal],
         scalp_signal: Optional[Signal],
         mom_signal: Optional[Signal],
+        regime: str = "MODERATE",
     ) -> Optional[Signal]:
-        """Combine signals from all strategies using weighted voting."""
+        """Combine signals with regime-aware voting."""
         buy_score = 0.0
         sell_score = 0.0
         best_signal = None
         best_strength = 0.0
 
+        # Adjust weights based on regime
+        if regime == "TRENDING":
+            # In trends: momentum matters more, scalping less
+            ai_w = STRATEGY.AI_WEIGHT
+            scalp_w = STRATEGY.SCALP_WEIGHT * 0.5
+            mom_w = STRATEGY.MOMENTUM_WEIGHT * 1.5
+        elif regime == "SIDEWAYS":
+            # In sideways: scalping matters more, momentum less
+            ai_w = STRATEGY.AI_WEIGHT
+            scalp_w = STRATEGY.SCALP_WEIGHT * 1.5
+            mom_w = STRATEGY.MOMENTUM_WEIGHT * 0.5
+        else:
+            ai_w = STRATEGY.AI_WEIGHT
+            scalp_w = STRATEGY.SCALP_WEIGHT
+            mom_w = STRATEGY.MOMENTUM_WEIGHT
+
         signals = [
-            (ai_signal, STRATEGY.AI_WEIGHT),
-            (scalp_signal, STRATEGY.SCALP_WEIGHT),
-            (mom_signal, STRATEGY.MOMENTUM_WEIGHT),
+            (ai_signal, ai_w),
+            (scalp_signal, scalp_w),
+            (mom_signal, mom_w),
         ]
 
         contributing = []
@@ -146,35 +181,40 @@ class MonitorEngine:
         if best_signal is None:
             return None
 
+        # Check R:R ratio after costs
+        if best_signal.entry_price > 0:
+            risk = abs(best_signal.entry_price - best_signal.stop_loss)
+            reward = abs(best_signal.take_profit - best_signal.entry_price)
+            if risk > 0:
+                rr = reward / risk
+                if rr < 1.5:
+                    return None  # Not worth the risk after costs
+
         if buy_score > sell_score and buy_score >= STRATEGY.VOTE_THRESHOLD:
             combined_name = " + ".join(contributing)
             return Signal(
-                epic=best_signal.epic,
-                direction="BUY",
+                epic=best_signal.epic, direction="BUY",
                 entry_price=best_signal.entry_price,
                 stop_loss=best_signal.stop_loss,
                 take_profit=best_signal.take_profit,
-                strategy_name=combined_name,
-                strength=buy_score,
+                strategy_name=combined_name, strength=buy_score,
             )
 
         if sell_score > buy_score and sell_score >= STRATEGY.VOTE_THRESHOLD:
             combined_name = " + ".join(contributing)
             return Signal(
-                epic=best_signal.epic,
-                direction="SELL",
+                epic=best_signal.epic, direction="SELL",
                 entry_price=best_signal.entry_price,
                 stop_loss=best_signal.stop_loss,
                 take_profit=best_signal.take_profit,
-                strategy_name=combined_name,
-                strength=sell_score,
+                strategy_name=combined_name, strength=sell_score,
             )
 
         return None
 
     def _run_analysis(self, mon: InstrumentMonitor, df: pd.DataFrame) -> Optional[Signal]:
-        """Run all strategies for a single instrument and combine via voting."""
         epic = mon.display_name
+        regime = self._get_market_regime(mon.adx)
 
         ai_signal = mon.ai_strategy.analyze(epic, df)
         scalp_signal = mon.scalping.analyze(epic, df)
@@ -188,14 +228,12 @@ class MonitorEngine:
                     mon.ai_strategy.predictor.predict(features)
                 )
 
-        combined = self._vote_signals(ai_signal, scalp_signal, mom_signal)
+        combined = self._vote_signals(ai_signal, scalp_signal, mom_signal, regime)
         return combined
 
     def _process_instrument(self, mon: InstrumentMonitor) -> dict:
-        """Process a single instrument: fetch price, check SL/TP, run analysis."""
         result = {"discord_sent": False, "close_sent": False}
 
-        # Fetch live price
         live = mon.fetcher.get_live_price()
         mon.price = live["price"]
         mon.prev_close = live["prev_close"]
@@ -203,81 +241,97 @@ class MonitorEngine:
         mon.change_pct = live["change_pct"]
 
         if mon.price == 0:
-            logger.warning(f"Could not get price for {mon.display_name}")
             return result
 
-        # Check SL/TP for open positions
-        closed_pos = self.position_tracker.check_sl_tp(mon.display_name, mon.price)
+        # Session check
+        mon.session_active = self._is_session_active()
+
+        # Check SL/TP with trailing SL (pass ATR for trailing calculation)
+        closed_pos = self.position_tracker.check_sl_tp(
+            mon.display_name, mon.price, atr=mon.atr
+        )
         if closed_pos:
             self.discord.send_close_signal(closed_pos)
             result["close_sent"] = True
-            logger.info(f"Position closed for {mon.display_name}: {closed_pos.close_reason}")
 
-        # Run analysis periodically
+        # EOD close check
+        eod_closed = self.position_tracker.check_eod_close()
+        for pos in eod_closed:
+            # Update close price to current price before sending notification
+            if pos.close_price == pos.entry_price:
+                pos.close_price = mon.price
+            self.discord.send_close_signal(pos)
+            result["close_sent"] = True
+
+        # Run analysis periodically (only during session)
         now = time.time()
         if now - mon.last_analysis_time >= MONITOR.ANALYSIS_INTERVAL_SEC:
             mon.last_analysis_time = now
 
             df = mon.fetcher.get_candles()
             if not df.empty and len(df) >= 60:
-                # Calculate display indicators
                 close = df["close"]
+                high = df["high"]
+                low = df["low"]
+
                 rsi_series = Indicators.rsi(close, 14)
                 _, _, hist_series = Indicators.macd(close)
+                adx_series = Indicators.adx(high, low, close, 14)
+                atr_series = Indicators.atr(high, low, close, 14)
 
-                mon.rsi = rsi_series.iloc[-1] if not pd.isna(rsi_series.iloc[-1]) else 50
-                mon.macd_hist = hist_series.iloc[-1] if not pd.isna(hist_series.iloc[-1]) else 0
+                mon.rsi = float(rsi_series.iloc[-1]) if not pd.isna(rsi_series.iloc[-1]) else 50
+                mon.macd_hist = float(hist_series.iloc[-1]) if not pd.isna(hist_series.iloc[-1]) else 0
+                mon.adx = float(adx_series.iloc[-1]) if not pd.isna(adx_series.iloc[-1]) else 0
+                mon.atr = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else 0
 
-                # Run strategies
-                signal = self._run_analysis(mon, df)
+                # Only generate new signals during active session AND trending market
+                if mon.session_active and mon.adx >= STRATEGY.REGIME_ADX_THRESHOLD:
+                    signal = self._run_analysis(mon, df)
 
-                if signal:
-                    is_new = (
-                        mon.last_signal is None or
-                        mon.last_signal.direction != signal.direction
-                    )
-                    old_direction = mon.last_signal.direction if mon.last_signal else None
-                    mon.last_signal = signal
-
-                    if is_new:
-                        # If signal reversed and we have an open position, close it
-                        if old_direction and old_direction != signal.direction:
-                            existing = self.position_tracker.get_position(mon.display_name)
-                            if existing:
-                                closed = self.position_tracker.close_position(
-                                    mon.display_name, mon.price, "SIGNAL_REVERSED"
-                                )
-                                if closed:
-                                    self.discord.send_close_signal(closed)
-                                    result["close_sent"] = True
-
-                        # Send new signal
-                        result["discord_sent"] = self.discord.send_signal(
-                            signal,
-                            confidence=mon.last_ai_confidence,
-                            probabilities=mon.last_ai_probs,
+                    if signal:
+                        is_new = (
+                            mon.last_signal is None or
+                            mon.last_signal.direction != signal.direction
                         )
-                        self._log_signal(
-                            mon.display_name, signal,
-                            mon.last_ai_confidence, mon.last_ai_probs,
-                        )
+                        old_direction = mon.last_signal.direction if mon.last_signal else None
+                        mon.last_signal = signal
 
-                        # Track the new position
-                        self.position_tracker.open_position(
-                            instrument=mon.display_name,
-                            direction=signal.direction,
-                            entry_price=signal.entry_price,
-                            stop_loss=signal.stop_loss,
-                            take_profit=signal.take_profit,
-                            strategy_name=signal.strategy_name,
-                        )
-                else:
-                    mon.last_signal = None
+                        if is_new:
+                            if old_direction and old_direction != signal.direction:
+                                existing = self.position_tracker.get_position(mon.display_name)
+                                if existing:
+                                    closed = self.position_tracker.close_position(
+                                        mon.display_name, mon.price, "SIGNAL_REVERSED"
+                                    )
+                                    if closed:
+                                        self.discord.send_close_signal(closed)
+                                        result["close_sent"] = True
+
+                            result["discord_sent"] = self.discord.send_signal(
+                                signal,
+                                confidence=mon.last_ai_confidence,
+                                probabilities=mon.last_ai_probs,
+                            )
+                            self._log_signal(
+                                mon.display_name, signal,
+                                mon.last_ai_confidence, mon.last_ai_probs,
+                                mon.adx, mon.rsi, mon.session_active,
+                            )
+
+                            self.position_tracker.open_position(
+                                instrument=mon.display_name,
+                                direction=signal.direction,
+                                entry_price=signal.entry_price,
+                                stop_loss=signal.stop_loss,
+                                take_profit=signal.take_profit,
+                                strategy_name=signal.strategy_name,
+                            )
+                    else:
+                        mon.last_signal = None
 
         return result
 
     def _batch_update_prices(self):
-        """Fetch all prices in 1 API call and update monitors."""
         enabled_instruments = [mon.instrument for mon in self.monitors]
         prices = fetch_all_prices_batch(enabled_instruments)
 
@@ -292,7 +346,6 @@ class MonitorEngine:
                 mon.change_pct = live["change_pct"]
 
     def _retrain_background(self):
-        """Re-train all AI models in a background thread."""
         self._retrain_in_progress = True
         self.last_retrain_status = "Training..."
         logger.info("Background retrain started")
@@ -302,14 +355,11 @@ class MonitorEngine:
                 inst = mon.instrument
                 logger.info(f"Retraining {inst.SYMBOL_DISPLAY}...")
 
-                # Download fresh data
                 fetcher = MarketFetcher(inst)
                 df = fetcher.get_training_data()
                 if df.empty or len(df) < 200:
-                    logger.warning(f"Not enough data for {inst.SYMBOL_DISPLAY}")
                     continue
 
-                # Create features and labels
                 features = FeatureEngineer.create_features(df)
                 labels = FeatureEngineer.create_labels(
                     df, horizon=AI.PREDICTION_HORIZON,
@@ -318,26 +368,24 @@ class MonitorEngine:
 
                 valid_mask = features.notna().all(axis=1) & labels.notna()
                 features = features[valid_mask].reset_index(drop=True)
-                labels = labels[valid_mask].reset_index(drop=True)
+                labels = labels[valid_mask].reset_index(drop=True).astype(int)
 
-                if len(features) < 100:
+                if len(features) < 200:
                     continue
 
-                # Train new model
                 predictor = GoldPredictor(model_path=inst.MODEL_PATH)
                 metrics = predictor.train(features, labels)
                 predictor.save()
 
-                # Hot-reload into the running monitor
                 mon.ai_strategy.predictor.load()
 
                 acc = metrics["accuracy"] * 100
-                logger.info(f"Retrained {inst.SYMBOL_DISPLAY}: {acc:.1f}% accuracy")
+                cv = metrics["cv_accuracy_mean"] * 100
+                logger.info(f"Retrained {inst.SYMBOL_DISPLAY}: test={acc:.1f}% cv={cv:.1f}%")
 
             now = datetime.utcnow().strftime("%H:%M")
             self.last_retrain_status = f"OK ({now})"
             self._last_retrain_time = time.time()
-            logger.info("Background retrain completed")
 
         except Exception as e:
             self.last_retrain_status = f"Error: {e}"
@@ -346,12 +394,10 @@ class MonitorEngine:
             self._retrain_in_progress = False
 
     def _maybe_retrain(self):
-        """Start retrain if enough time has passed."""
         if self._retrain_in_progress:
             return
         now = time.time()
         if self._last_retrain_time == 0:
-            # First retrain: wait 5 minutes after startup
             if now - self._start_time < 300:
                 return
         elif now - self._last_retrain_time < self.RETRAIN_INTERVAL_SEC:
@@ -361,17 +407,14 @@ class MonitorEngine:
         thread.start()
 
     def _keyboard_listener(self):
-        """Listen for keyboard input in a background thread.
-        Ctrl+W = chr(23), Ctrl+L = chr(12)
-        """
         if sys.platform == "win32":
             import msvcrt
             while self.is_running:
                 if msvcrt.kbhit():
                     key = msvcrt.getch()
-                    if key == b'\x17':      # Ctrl+W
+                    if key == b'\x17':
                         self._pending_command = "ctrl_w"
-                    elif key == b'\x0c':    # Ctrl+L
+                    elif key == b'\x0c':
                         self._pending_command = "ctrl_l"
                 time.sleep(0.1)
         else:
@@ -385,14 +428,11 @@ class MonitorEngine:
                         self._pending_command = "ctrl_l"
 
     def _process_keyboard(self):
-        """Process pending keyboard commands."""
         cmd = self._pending_command
         if cmd is None:
             return
-
         self._pending_command = None
 
-        # Find instruments with open positions
         open_positions = []
         for mon in self.monitors:
             pos = self.position_tracker.get_position(mon.display_name)
@@ -400,36 +440,28 @@ class MonitorEngine:
                 open_positions.append((mon, pos))
 
         if cmd == "ctrl_w":
-            # Ctrl+W = Close on WIN
             for mon, pos in open_positions:
                 closed = self.position_tracker.close_position(
                     mon.display_name, mon.price, "MANUAL_WIN"
                 )
                 if closed:
                     self.discord.send_close_signal(closed)
-                    logger.info(f"Manual WIN close: {mon.display_name} @ {mon.price}")
-
         elif cmd == "ctrl_l":
-            # Ctrl+L = Close on LOSS
             for mon, pos in open_positions:
                 closed = self.position_tracker.close_position(
                     mon.display_name, mon.price, "MANUAL_LOSS"
                 )
                 if closed:
                     self.discord.send_close_signal(closed)
-                    logger.info(f"Manual LOSS close: {mon.display_name} @ {mon.price}")
 
     def run(self):
-        """Main monitoring loop for all instruments."""
         self.is_running = True
         self._start_time = time.time()
-        logger.info(f"Trading Monitor starting with {len(self.monitors)} instruments...")
+        logger.info(f"Trading Monitor v2 starting with {len(self.monitors)} instruments...")
 
-        # Start keyboard listener thread
         kb_thread = threading.Thread(target=self._keyboard_listener, daemon=True)
         kb_thread.start()
 
-        # Initial fetch with prev_close (uses /quote endpoint, 1 per instrument)
         for mon in self.monitors:
             live = mon.fetcher.get_live_price()
             mon.price = live["price"]
@@ -439,20 +471,14 @@ class MonitorEngine:
 
         while self.is_running:
             try:
-                # Process keyboard commands
                 self._process_keyboard()
-
-                # Auto-retrain AI models periodically
                 self._maybe_retrain()
-
-                # Single batch API call for all prices
                 self._batch_update_prices()
 
                 results = {}
                 for mon in self.monitors:
                     results[mon.display_name] = self._process_instrument(mon)
 
-                # Display UI
                 TerminalUI.display_multi(
                     monitors=self.monitors,
                     position_tracker=self.position_tracker,
