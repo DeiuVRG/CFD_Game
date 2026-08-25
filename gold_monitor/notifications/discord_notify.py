@@ -53,8 +53,9 @@ class DiscordNotifier:
         rr = signal.risk_reward_ratio
         now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
-        is_forex = "USD" in signal.epic and "XAU" not in signal.epic
-        fmt = "5f" if is_forex else ",.2f"
+        # 5-decimal format only for sub-10 prices (FX pairs); gold/BTC
+        # and other large prices use thousands formatting.
+        fmt = "5f" if signal.entry_price < 10 else ",.2f"
 
         fields = [
             {"name": "\U0001f4b0 Pret", "value": f"${signal.entry_price:{fmt}}", "inline": True},
@@ -107,8 +108,7 @@ class DiscordNotifier:
         pnl_emoji = "\U0001f4b0" if pnl > 0 else "\U0001f4b8"
         pnl_sign = "+" if pnl > 0 else ""
 
-        is_forex = "USD" in position.instrument and "XAU" not in position.instrument
-        fmt = "5f" if is_forex else ",.2f"
+        fmt = "5f" if position.entry_price < 10 else ",.2f"
 
         duration = ""
         if position.closed_at and position.opened_at:

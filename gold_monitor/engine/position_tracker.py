@@ -21,6 +21,8 @@ class TrackedPosition:
     closed_at: Optional[datetime] = None
     close_price: Optional[float] = None
     close_reason: Optional[str] = None
+    # 24/7 instruments (crypto) are exempt from the end-of-day forced close
+    eod_close: bool = True
     # Trailing SL state
     highest_price: float = 0.0    # For BUY positions
     lowest_price: float = 999999  # For SELL positions
@@ -102,7 +104,8 @@ class PositionTracker:
         return None
 
     def open_position(self, instrument: str, direction: str, entry_price: float,
-                      stop_loss: float, take_profit: float, strategy_name: str) -> TrackedPosition:
+                      stop_loss: float, take_profit: float, strategy_name: str,
+                      eod_close: bool = True) -> TrackedPosition:
         if self.has_position(instrument):
             self.close_position(instrument, entry_price, "SIGNAL_REVERSED")
 
@@ -113,6 +116,7 @@ class PositionTracker:
             stop_loss=stop_loss,
             take_profit=take_profit,
             strategy_name=strategy_name,
+            eod_close=eod_close,
         )
         self._positions[instrument] = pos
         logger.info(f"Position opened: {direction} {instrument} @ {entry_price}")
@@ -169,6 +173,10 @@ class PositionTracker:
         for instrument in list(self._positions.keys()):
             pos = self.get_position(instrument)
             if pos is None:
+                continue
+
+            # 24/7 instruments (crypto) are never force-closed at EOD
+            if not pos.eod_close:
                 continue
 
             # Use last known price (entry as fallback)

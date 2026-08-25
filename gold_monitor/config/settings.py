@@ -111,6 +111,27 @@ INSTRUMENTS = [
         PIP_VALUE=0.0001,
         ENABLED=False,
     ),
+    InstrumentConfig(
+        SYMBOL="BTC-USD",
+        SYMBOL_DISPLAY="BTC/USD (Bitcoin)",
+        MODEL_PATH="models/btc_xgb.pkl",
+        TWELVEDATA_SYMBOL="BTC/USD",
+        TV_SYMBOL="COINBASE:BTCUSD",
+        TV_EXCHANGE="crypto",
+        # BTC volatility is far above gold: 0.005 over a 6h horizon labels
+        # almost everything as BUY/SELL noise. Start at 0.01 and let the
+        # optimizer search the grid below.
+        PRICE_CHANGE_THRESHOLD=0.01,
+        THRESHOLD_GRID=[0.008, 0.01, 0.015, 0.02],
+        # Percentage cost model (takes priority over pips): retail CFD BTC
+        # round-trip spread is typically ~0.20-0.35% (e.g. XTB lists ~0.22%
+        # target spread on BITCOIN, Capital.com ~0.35% in volatile hours;
+        # checked Aug 2025 broker spread tables). We start conservative at
+        # 0.30% round-trip; slippage is added on top by CostConfig.
+        SPREAD_PCT=0.0030,
+        SESSION_24_7=True,   # Crypto trades 24/7 - no session filter, no EOD close
+        ENABLED=False,       # Stays False until it passes the OOS gate (Faza 4)
+    ),
 ]
 
 

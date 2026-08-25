@@ -137,9 +137,18 @@ class MonitorEngine:
             ])
 
     @staticmethod
-    def _is_session_active() -> bool:
-        """Check if we're within trading session hours (London+NY overlap)."""
-        now = datetime.now(timezone.utc)
+    def _is_session_active(instrument: InstrumentConfig = None,
+                           now: datetime = None) -> bool:
+        """Per-instrument session check.
+
+        24/7 markets (crypto) are always active. Gold/FX keep the classic
+        window: weekdays within the London+NY overlap. `now` is injectable
+        for tests.
+        """
+        if instrument is not None and instrument.SESSION_24_7:
+            return True
+
+        now = now or datetime.now(timezone.utc)
         hour = now.hour
         # Weekend check: Saturday=5, Sunday=6
         if now.weekday() >= 5:
@@ -294,8 +303,8 @@ class MonitorEngine:
         if mon.price == 0:
             return result
 
-        # Session check
-        mon.session_active = self._is_session_active()
+        # Session check (per instrument: crypto is 24/7, gold keeps sessions)
+        mon.session_active = self._is_session_active(mon.instrument)
 
         # Check SL/TP with trailing SL (pass ATR for trailing calculation)
         closed_pos = self.position_tracker.check_sl_tp(
@@ -379,6 +388,7 @@ class MonitorEngine:
                                 stop_loss=signal.stop_loss,
                                 take_profit=signal.take_profit,
                                 strategy_name=signal.strategy_name,
+                                eod_close=not mon.instrument.SESSION_24_7,
                             )
                     else:
                         mon.last_signal = None

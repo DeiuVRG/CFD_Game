@@ -187,7 +187,7 @@ def main():
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--train", nargs="?", const="all", metavar="INSTRUMENT",
-                       help="Train AI model (all, gold, eurusd, gbpusd)")
+                       help="Train AI model (all, gold, btc, eurusd, gbpusd)")
     group.add_argument("--monitor", action="store_true", help="Start live monitoring")
     group.add_argument("--backtest", nargs="?", const="all", metavar="INSTRUMENT",
                        help="Run backtest with cost modeling (fixed split)")
