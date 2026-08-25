@@ -49,6 +49,10 @@ gold_monitor/
 | `cd gold_monitor && python main.py --train` | Antreneaza/re-antreneaza modelul AI pe 2 ani de date istorice |
 | `cd gold_monitor && python main.py --monitor` | Porneste monitorizarea LIVE (loop infinit) |
 | `cd gold_monitor && python main.py --test-discord` | Trimite mesaj test pe Discord |
+| `cd gold_monitor && python main.py --backtest gold` | Backtest v3 (fereastra optimizare + OOS separat) |
+| `cd gold_monitor && python main.py --optimize gold` | Grid search parametri + prag etichetare |
+| `cd gold_monitor && python main.py --report` | Raport colectare semnale + export CSV |
+| `cd gold_monitor && python tools/run_evaluation.py all` | Protocolul complet de evaluare (Faza 4) |
 
 ---
 
@@ -58,15 +62,18 @@ gold_monitor/
 - Ia pretul LIVE al aurului de pe Yahoo Finance (GC=F)
 - Afiseaza dashboard-ul in terminal
 
-### La fiecare 60 secunde (candle noua):
-1. Descarca ultimele 100 candle-uri de 5 minute
-2. Calculeaza indicatorii tehnici (RSI, MACD, BB, ATR, EMA)
-3. Ruleaza **3 strategii in paralel**:
+### La fiecare 60 secunde (analiza):
+1. Descarca ultimele candle-uri de 5 minute (display + strategii clasice)
+2. Separat, pastreaza un cache de candele de 1h (30 zile) pentru calea AI
+3. Calculeaza indicatorii tehnici (RSI, MACD, BB, ATR, EMA, ADX)
+4. Ruleaza **3 strategii in paralel**:
 
-#### a) AI (XGBoost) - 50% din votul final
-- Calculeaza 20 features din candle-uri
+#### a) AI (XGBoost) - 50% din votul final [v3: pe candele de 1h]
+- Ruleaza pe TRAIN_INTERVAL (1h) - acelasi timeframe pe care modelul a fost
+  antrenat si backtestat; gate-ul de regim ADX se calculeaza tot pe 1h
+- Calculeaza features din candle-urile de 1h
 - Modelul prezice BUY / SELL / HOLD
-- Doar daca confidenta > 60%
+- Doar daca confidenta trece pragul instrumentului
 
 #### b) Scalping (RSI + Bollinger Bands) - 25% din vot
 - RSI < 30 + pret sub BB lower → BUY
@@ -80,8 +87,11 @@ gold_monitor/
    - Daca scorul combinat > 0.50 → SEMNAL VALID
 5. Daca e semnal NOU (diferit de ultimul):
    - Calculeaza Stop Loss + Take Profit (bazat pe ATR)
-   - Trimite pe Discord cu ping
-   - Salveaza in `output/signals.csv`
+   - Trimite pe Discord (cu ping daca DISCORD_MENTION e setat)
+   - Persista in `output/signals.csv` SI in `data/signals.db` (SQLite,
+     append-only, cu versiunea modelului); outcome-ul ipotetic (TP/SL/EOD,
+     P&L brut/net) se completeaza ulterior de position tracker
+   - Raport agregat oricand cu `python main.py --report`
 
 ---
 
