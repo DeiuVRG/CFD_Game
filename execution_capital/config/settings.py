@@ -15,9 +15,11 @@ class BrokerConfig:
 
 @dataclass
 class RiskConfig:
-    MAX_RISK_PER_TRADE: float = 0.03      # 3% of equity
-    MAX_DAILY_LOSS: float = 0.10           # 10% of day-start equity
+    MAX_RISK_PER_TRADE: float = 0.01      # 1% of equity (was 3% - too hot)
+    MAX_DAILY_LOSS: float = 0.03           # 3% of day-start equity (was 10%)
     MAX_CONCURRENT_POSITIONS: int = 3
+    MAX_TRADES_PER_DAY: int = 5            # Hard cap on new trades per day
+    MAX_FX_POSITIONS: int = 1              # Anti-correlation: max 1 FX position
     SL_ATR_MULTIPLIER: float = 1.5
     TP_ATR_MULTIPLIER: float = 2.0
     MIN_RISK_REWARD: float = 1.0           # Minimum 1:1 R:R
@@ -57,10 +59,13 @@ class MeanReversionConfig:
 
 @dataclass
 class TradingConfig:
+    # Only pairs QUOTED in the account currency (USD). USDJPY was removed:
+    # its P&L accrues in JPY and PositionSizer has no quote-currency
+    # conversion source, so sizing it would be wrong. Re-add non-USD-quoted
+    # pairs only once a conversion rate feed exists (see PositionSizer).
     SYMBOLS: List[str] = field(default_factory=lambda: [
         "EURUSD",
         "GBPUSD",
-        "USDJPY",
     ])
     SCAN_INTERVAL_SEC: int = 30
     CANDLE_LOOKBACK: int = 100

@@ -170,6 +170,16 @@ class TradingEngine:
             logger.error("Failed to log in. Exiting.")
             return
 
+        # Detect account currency so the sizer can reject instruments whose
+        # quote currency it cannot convert.
+        try:
+            accounts = self.client.get_accounts()
+            if accounts:
+                self.risk_manager.account_currency = accounts[0].currency.upper()
+                logger.info(f"Account currency: {self.risk_manager.account_currency}")
+        except Exception as e:
+            logger.warning(f"Could not detect account currency: {e}")
+
         # Initial market info cache
         for symbol in TRADING.SYMBOLS:
             self._get_market_info(symbol)
