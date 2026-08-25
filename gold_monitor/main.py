@@ -32,6 +32,23 @@ def setup_logging():
     )
 
 
+
+def _select_targets(instrument_filter: str = None):
+    """Enabled instruments by default; an explicit filter also matches
+    DISABLED instruments so they can still be trained/re-evaluated."""
+    from config.settings import INSTRUMENTS
+
+    if not instrument_filter:
+        return [i for i in INSTRUMENTS if i.ENABLED]
+    targets = [i for i in INSTRUMENTS
+               if instrument_filter.lower() in i.SYMBOL.lower()
+               or instrument_filter.lower() in i.SYMBOL_DISPLAY.lower()]
+    if not targets:
+        print(f"ERROR: No instrument matching '{instrument_filter}'")
+        sys.exit(1)
+    return targets
+
+
 def cmd_train(instrument_filter: str = None):
     from ai.trainer import train_model
     success = train_model(instrument_filter)
@@ -45,13 +62,7 @@ def cmd_backtest(instrument_filter: str = None):
     from config.settings import INSTRUMENTS
     from data.gold_fetcher import MarketFetcher
 
-    targets = [i for i in INSTRUMENTS if i.ENABLED]
-    if instrument_filter:
-        targets = [i for i in targets if instrument_filter.lower() in i.SYMBOL.lower()
-                    or instrument_filter.lower() in i.SYMBOL_DISPLAY.lower()]
-        if not targets:
-            print(f"ERROR: No instrument matching '{instrument_filter}'")
-            sys.exit(1)
+    targets = _select_targets(instrument_filter)
 
     for inst in targets:
         print(f"\nDownloading data for {inst.SYMBOL_DISPLAY}...")
@@ -74,13 +85,7 @@ def cmd_backtest_wf(instrument_filter: str = None):
     from config.settings import INSTRUMENTS
     from data.gold_fetcher import MarketFetcher
 
-    targets = [i for i in INSTRUMENTS if i.ENABLED]
-    if instrument_filter:
-        targets = [i for i in targets if instrument_filter.lower() in i.SYMBOL.lower()
-                    or instrument_filter.lower() in i.SYMBOL_DISPLAY.lower()]
-        if not targets:
-            print(f"ERROR: No instrument matching '{instrument_filter}'")
-            sys.exit(1)
+    targets = _select_targets(instrument_filter)
 
     for inst in targets:
         print(f"\nDownloading data for {inst.SYMBOL_DISPLAY}...")
@@ -120,6 +125,13 @@ def cmd_monitor():
     from config.settings import INSTRUMENTS
 
     enabled = [i for i in INSTRUMENTS if i.ENABLED]
+    if not enabled:
+        print("\n  No ENABLED instruments - nothing to monitor.")
+        print("  Every instrument is currently disabled by the OOS activation")
+        print("  gate (see RESULTS.md). An instrument gets ENABLED=True only")
+        print("  after passing the Faza 4 criteria on out-of-sample data.")
+        return
+
     print(f"\n  Starting Trading Monitor v2...")
     print(f"  Instruments: {', '.join(i.SYMBOL_DISPLAY for i in enabled)}")
     print(f"  Features: Walk-forward AI, Trailing SL, Session filter, Regime detection")
@@ -138,13 +150,7 @@ def cmd_optimize(instrument_filter: str = None):
     from config.settings import INSTRUMENTS
     from data.gold_fetcher import MarketFetcher
 
-    targets = [i for i in INSTRUMENTS if i.ENABLED]
-    if instrument_filter:
-        targets = [i for i in targets if instrument_filter.lower() in i.SYMBOL.lower()
-                    or instrument_filter.lower() in i.SYMBOL_DISPLAY.lower()]
-        if not targets:
-            print(f"ERROR: No instrument matching '{instrument_filter}'")
-            sys.exit(1)
+    targets = _select_targets(instrument_filter)
 
     for inst in targets:
         print(f"\nDownloading data for {inst.SYMBOL_DISPLAY}...")

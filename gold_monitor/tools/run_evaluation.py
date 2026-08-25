@@ -89,11 +89,11 @@ def load_data(inst, use_cache=True) -> pd.DataFrame:
 
 def check_criteria(oos_metrics: dict) -> dict:
     checks = {
-        "trades>=30": oos_metrics.get("total_trades", 0) >= CRITERIA["min_trades"],
-        "profit_factor>=1.15": oos_metrics.get("profit_factor", 0) >= CRITERIA["min_profit_factor"],
-        "expectancy>0": oos_metrics.get("avg_trade_pnl", 0) > CRITERIA["min_expectancy_pct"],
-        "max_dd<15%": oos_metrics.get("max_drawdown", -1) > CRITERIA["max_drawdown_limit"],
-        "trade_sharpe>0.5": oos_metrics.get("trade_sharpe", 0) > CRITERIA["min_trade_sharpe"],
+        "trades>=30": bool(oos_metrics.get("total_trades", 0) >= CRITERIA["min_trades"]),
+        "profit_factor>=1.15": bool(oos_metrics.get("profit_factor", 0) >= CRITERIA["min_profit_factor"]),
+        "expectancy>0": bool(oos_metrics.get("avg_trade_pnl", 0) > CRITERIA["min_expectancy_pct"]),
+        "max_dd<15%": bool(oos_metrics.get("max_drawdown", -1) > CRITERIA["max_drawdown_limit"]),
+        "trade_sharpe>0.5": bool(oos_metrics.get("trade_sharpe", 0) > CRITERIA["min_trade_sharpe"]),
     }
     return {"checks": checks, "enabled": all(checks.values())}
 

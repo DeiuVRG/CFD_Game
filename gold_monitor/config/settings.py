@@ -86,6 +86,14 @@ INSTRUMENTS = [
         PRICE_CHANGE_THRESHOLD=0.005,
         SPREAD_PIPS=3.0,     # XTB Gold spread ~3 pips ($0.30)
         PIP_VALUE=0.10,      # Gold: 1 pip = $0.10
+        # Disabled 2026-08-25 by the honest v3 execution backtest (Faza 4):
+        # optim window +30.51% (PF 1.61, 62 trades) but OOS -16.17%, PF 0.82,
+        # WR 38.0%, trade-Sharpe -0.25, maxDD -33.7% over 92 trades ->
+        # in-sample overfit, no out-of-sample edge after costs. The old
+        # (pre-v3) execution showed OOS +2.26% - the bugs were the "edge".
+        # Evaluated combo: thr=0.005, SL=2.5xATR, TP=4.0xATR, conf=0.50,
+        # ADX>=15, RR>=1.0. Full numbers: RESULTS.md.
+        ENABLED=False,
     ),
     InstrumentConfig(
         SYMBOL="EURUSD=X",
@@ -130,7 +138,14 @@ INSTRUMENTS = [
         # 0.30% round-trip; slippage is added on top by CostConfig.
         SPREAD_PCT=0.0030,
         SESSION_24_7=True,   # Crypto trades 24/7 - no session filter, no EOD close
-        ENABLED=False,       # Stays False until it passes the OOS gate (Faza 4)
+        # Stays disabled after the Faza 4 evaluation (2026-08-25): every
+        # parameter combo was NEGATIVE even on the optimization window (best:
+        # -16.40%, PF 0.91, 124 trades); OOS (run once): -24.32%, PF 0.82,
+        # WR 38.7%, trade-Sharpe -0.24, maxDD -38.1%, 119 trades. Cumulative
+        # costs ~54% at ~0.45% round-trip make this signal untradeable.
+        # Evaluated combo: thr=0.015, SL=2.5xATR, TP=4.0xATR, conf=0.45,
+        # ADX>=25. Full numbers: RESULTS.md.
+        ENABLED=False,
     ),
 ]
 

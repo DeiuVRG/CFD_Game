@@ -107,12 +107,21 @@ def train_model(instrument_filter: str = None) -> bool:
     print("  AI Trainer v2 - Walk-Forward + Class Weights")
     print("=" * 60)
 
-    targets = [i for i in INSTRUMENTS if i.ENABLED]
+    # No filter -> enabled instruments only. An explicit filter also matches
+    # DISABLED instruments so their models can still be (re)trained for
+    # re-evaluation without touching the activation gate.
     if instrument_filter:
-        targets = [i for i in targets if instrument_filter.lower() in i.SYMBOL.lower()
-                    or instrument_filter.lower() in i.SYMBOL_DISPLAY.lower()]
+        targets = [i for i in INSTRUMENTS
+                   if instrument_filter.lower() in i.SYMBOL.lower()
+                   or instrument_filter.lower() in i.SYMBOL_DISPLAY.lower()]
         if not targets:
             print(f"ERROR: No instrument matching '{instrument_filter}'")
+            return False
+    else:
+        targets = [i for i in INSTRUMENTS if i.ENABLED]
+        if not targets:
+            print("No ENABLED instruments. Name one explicitly (e.g. "
+                  "--train gold) to train a disabled instrument.")
             return False
 
     print(f"\n  Training {len(targets)} instrument(s):")
