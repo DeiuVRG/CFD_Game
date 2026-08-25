@@ -100,7 +100,7 @@ gold_monitor/
 ## Discord
 
 - Webhook URL configurat in `.env`
-- Tag user: `<@266234847532548096>`
+- Tag user: configurat prin `DISCORD_MENTION` in `.env` (optional)
 - Notificare exemplu:
   ```
   🟢 CUMPARA AUR (XAU/USD)

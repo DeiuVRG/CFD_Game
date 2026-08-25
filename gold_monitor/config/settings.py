@@ -128,7 +128,9 @@ class MonitorConfig:
 class DiscordConfig:
     WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
     BOT_NAME: str = "Trading Monitor"
-    MENTION_TAG: str = os.getenv("DISCORD_MENTION", "<@266234847532548096>")
+    # User mention prepended to notifications, e.g. "<@123456789012345678>".
+    # Personal - lives only in .env (DISCORD_MENTION), never hardcoded here.
+    MENTION_TAG: str = os.getenv("DISCORD_MENTION", "")
     NOTIFY_ON_SIGNAL_CHANGE: bool = True
     SEND_HOURLY_STATUS: bool = False
 

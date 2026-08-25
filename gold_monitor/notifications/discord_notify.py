@@ -22,6 +22,10 @@ class DiscordNotifier:
             logger.warning("Discord webhook URL not configured")
             return False
 
+        # No mention configured (DISCORD_MENTION unset) -> drop empty content
+        if not payload.get("content"):
+            payload.pop("content", None)
+
         try:
             resp = requests.post(self.webhook_url, json=payload, timeout=10)
             if resp.status_code in (200, 204):
