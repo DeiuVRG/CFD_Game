@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 logs/
-output/*.csv
+output/
 models/*.pkl
+*.db
 .venv/
