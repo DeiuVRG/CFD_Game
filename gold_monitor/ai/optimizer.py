@@ -54,8 +54,11 @@ MIN_RR_RANGE = [1.0, 1.5, 2.0]
 ADX_FILTER_RANGE = [0, 15, 20, 25]
 
 # Minimum trades in the optimization window for a combo to be considered a
-# reliable candidate (defined BEFORE looking at any OOS data).
-MIN_TRADES_FOR_SELECTION = 15
+# reliable candidate. Selection rule (declared BEFORE any OOS run, never
+# adjusted after seeing OOS): best score among combos with >= 30 trades;
+# if none reach 30, fall back to >= 15; else overall best.
+MIN_TRADES_FOR_SELECTION = 30
+MIN_TRADES_FALLBACK = 15
 
 
 def optimize_instrument(instrument: InstrumentConfig, df: pd.DataFrame) -> list:
@@ -187,10 +190,12 @@ def optimize_instrument(instrument: InstrumentConfig, df: pd.DataFrame) -> list:
     return all_results
 
 
-def select_best(results: list, min_trades: int = MIN_TRADES_FOR_SELECTION):
+def select_best(results: list):
     """Best combo with a minimum sample size (avoids tiny-sample flukes).
-    Falls back to the overall best if nothing reaches min_trades."""
-    for r in results:
-        if r.total_trades >= min_trades:
-            return r
+    Tries >= MIN_TRADES_FOR_SELECTION first, then >= MIN_TRADES_FALLBACK,
+    then the overall best. Results must already be sorted by score."""
+    for min_trades in (MIN_TRADES_FOR_SELECTION, MIN_TRADES_FALLBACK):
+        for r in results:
+            if r.total_trades >= min_trades:
+                return r
     return results[0] if results else None
