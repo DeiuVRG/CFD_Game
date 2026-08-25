@@ -1,0 +1,40 @@
+{
+  "baseline_recommended_weights": {
+    "MACD_HIST": 0.17,
+    "ADX_TREND": 0.16,
+    "RSI": 0.13,
+    "BB_POSITION": 0.1,
+    "CMF": 0.1,
+    "EMA_CROSS": 0.08,
+    "SMA_RATIO": 0.08,
+    "ROC": 0.06,
+    "AROON": 0.05,
+    "OBV_TREND": 0.04,
+    "VOLUME_SURGE": 0.03
+  },
+  "essential_indicators": [
+    "EMA_CROSS"
+  ],
+  "redundant_indicators": [
+    "ROC",
+    "MACD_HIST",
+    "ADX_TREND",
+    "SMA_RATIO",
+    "RSI",
+    "VOLUME_SURGE",
+    "OBV_TREND"
+  ],
+  "best_practices": [
+    "5-10 indicatori e sweet spot-ul (penalizarea de complexitate + ablation)",
+    "Recalibreaza trimestrial, dar gradual (max 30% shift per indicator)",
+    "Scorul final se decide pe TEST, nu pe validation - nu te atasa de clasamentul intermediar",
+    "Semnificatia statistica (bootstrap CI > 0) separa edge-ul de noroc",
+    "Stress-test pe ferestrele de criza inainte de orice deployment"
+  ],
+  "red_flags": [
+    "Drawdown > 50% = eliminare directa",
+    "Sharpe < 1.0 pe validation rareori supravietuieste pe test",
+    "Performanta concentrata intr-un singur regim de piata",
+    "Castig pe validation + esec bootstrap pe test = overfitting"
+  ]
+}

@@ -1,0 +1,340 @@
+{
+  "final_ranking": [
+    {
+      "player_id": "P6_momentum",
+      "method": "Experience-based heuristic: heavy trend/momentum weights; oscillators flipped from contrarian to trend-following (overbought = strength, not a fade).",
+      "n_indicators": 9,
+      "eliminated": false,
+      "elimination_reason": null,
+      "last_monthly_score": 0.4609236663109156,
+      "final_score": 0.17565477132824575,
+      "weights": {
+        "SMA_RATIO": 0.16,
+        "EMA_CROSS": 0.16,
+        "MACD_HIST": 0.14,
+        "ADX_TREND": 0.12,
+        "ROC": 0.12,
+        "AROON": 0.1,
+        "OBV_TREND": 0.08,
+        "RSI": 0.06,
+        "VOLUME_SURGE": 0.06
+      }
+    },
+    {
+      "player_id": "P1_equal_weight",
+      "method": "Baseline: equal weights on 5 classic indicators, canonical interpretations. Every other method must beat this to matter.",
+      "n_indicators": 5,
+      "eliminated": false,
+      "elimination_reason": null,
+      "last_monthly_score": 0.39305075136037765,
+      "final_score": 0.15,
+      "weights": {
+        "RSI": 0.2,
+        "MACD_HIST": 0.2,
+        "BB_POSITION": 0.2,
+        "ADX_TREND": 0.2,
+        "CMF": 0.2
+      }
+    },
+    {
+      "player_id": "P2_correlation_ic",
+      "method": "Information-coefficient statistics: weight_i ~ |corr(signal_i, forward 21d return)| pooled across the universe; orientation_i = sign of that correlation.",
+      "n_indicators": 14,
+      "eliminated": true,
+      "elimination_reason": "score gap >= 20%",
+      "last_monthly_score": 0.14719317740691262,
+      "final_score": null,
+      "weights": {
+        "EMA_CROSS": 0.18204401137812726,
+        "SMA_RATIO": 0.14793725611915673,
+        "AROON": 0.09615340674144195,
+        "VWAP_VALUE": 0.09282803871549679,
+        "ROC": 0.0758334112277537,
+        "RSI": 0.05894121259625741,
+        "BB_POSITION": 0.05722477503212749,
+        "MFI": 0.051609420319699666,
+        "STOCH": 0.050220556074160955,
+        "CCI": 0.047523892982731235,
+        "ADX_TREND": 0.04428691117426377,
+        "CMF": 0.042391654232913155,
+        "MACD_HIST": 0.040570278645419074,
+        "OBV_TREND": 0.01243517476045078
+      }
+    },
+    {
+      "player_id": "P3_random_forest",
+      "method": "RandomForestRegressor on pooled (indicator signals -> forward 21d return); weights = normalized feature importances; orientation = sign of each signal's correlation with forward returns.",
+      "n_indicators": 12,
+      "eliminated": true,
+      "elimination_reason": "score gap >= 20%",
+      "last_monthly_score": 0.10070734320686228,
+      "final_score": null,
+      "weights": {
+        "EMA_CROSS": 0.33180213217257937,
+        "ATR_REGIME": 0.2912710535462205,
+        "CMF": 0.07737533141764753,
+        "MACD_HIST": 0.06699265122824956,
+        "ADX_TREND": 0.0639511488547545,
+        "SMA_RATIO": 0.05455134195087701,
+        "RSI": 0.041607970131650435,
+        "BB_POSITION": 0.021701642262316235,
+        "ROC": 0.01813457720225682,
+        "MFI": 0.017644202704649174,
+        "STOCH": 0.00899185460704221,
+        "OBV_TREND": 0.005976093921756683
+      }
+    },
+    {
+      "player_id": "P7_mean_reversion",
+      "method": "Experience-based heuristic: contrarian oscillator stack (buy oversold, sell overbought) with band-position confirmation.",
+      "n_indicators": 8,
+      "eliminated": true,
+      "elimination_reason": "score gap >= 20%",
+      "last_monthly_score": 0.09620970168513093,
+      "final_score": null,
+      "weights": {
+        "RSI": 0.18,
+        "BB_POSITION": 0.16,
+        "STOCH": 0.13,
+        "CCI": 0.12,
+        "WILLR": 0.11,
+        "MFI": 0.11,
+        "KELTNER_POSITION": 0.1,
+        "VWAP_VALUE": 0.09
+      }
+    },
+    {
+      "player_id": "P5_genetic",
+      "method": "Genetic algorithm (pop=48, gens=60, tournament selection, blend crossover, gaussian mutation) maximizing training-set Sharpe of a monthly top-K portfolio built from the weighted signal score.",
+      "n_indicators": 11,
+      "eliminated": true,
+      "elimination_reason": "score gap >= 20%",
+      "last_monthly_score": 0.04290632739725448,
+      "final_score": null,
+      "weights": {
+        "BB_POSITION": 0.25798263799643834,
+        "OBV_TREND": 0.21784652175233987,
+        "ROC": 0.12920250083057794,
+        "EMA_CROSS": 0.12535589887842633,
+        "CMF": 0.11607611833942032,
+        "RSI": 0.10297969363624995,
+        "SMA_RATIO": 0.04135135407797432,
+        "CCI": 0.009205274488573018,
+        "MACD_HIST": 0.0,
+        "ADX_TREND": 0.0,
+        "AROON": 0.0
+      }
+    },
+    {
+      "player_id": "P4_xgboost",
+      "method": "XGBoost regressor on pooled (indicator signals -> forward 10d return); weights = normalized gain importances; orientation from signal/return correlation. Shorter horizon than the RF player.",
+      "n_indicators": 11,
+      "eliminated": true,
+      "elimination_reason": "score gap >= 20%",
+      "last_monthly_score": 0.0,
+      "final_score": null,
+      "weights": {
+        "WILLR": 0.11392718789306933,
+        "AROON": 0.11033702893538644,
+        "CCI": 0.10621545734038394,
+        "MACD_HIST": 0.09489168547578072,
+        "ROC": 0.09293951423736597,
+        "VOLUME_SURGE": 0.09290744693991033,
+        "EMA_CROSS": 0.08504420138697916,
+        "VWAP_VALUE": 0.08359527959248664,
+        "RSI": 0.07873350774943048,
+        "ADX_TREND": 0.0777947569879253,
+        "KELTNER_POSITION": 0.06361393346128165
+      }
+    }
+  ],
+  "winner_patterns": {
+    "common_indicators_top3": [
+      "ADX_TREND",
+      "MACD_HIST",
+      "RSI"
+    ],
+    "weight_ranges_top3": {
+      "ADX_TREND": {
+        "min": 0.12,
+        "max": 0.2,
+        "avg": 0.16
+      },
+      "AROON": {
+        "min": 0.0,
+        "max": 0.1,
+        "avg": 0.05
+      },
+      "BB_POSITION": {
+        "min": 0.0,
+        "max": 0.2,
+        "avg": 0.1
+      },
+      "CMF": {
+        "min": 0.0,
+        "max": 0.2,
+        "avg": 0.1
+      },
+      "EMA_CROSS": {
+        "min": 0.0,
+        "max": 0.16,
+        "avg": 0.08
+      },
+      "MACD_HIST": {
+        "min": 0.14,
+        "max": 0.2,
+        "avg": 0.17
+      },
+      "OBV_TREND": {
+        "min": 0.0,
+        "max": 0.08,
+        "avg": 0.04
+      },
+      "ROC": {
+        "min": 0.0,
+        "max": 0.12,
+        "avg": 0.06
+      },
+      "RSI": {
+        "min": 0.06,
+        "max": 0.2,
+        "avg": 0.13
+      },
+      "SMA_RATIO": {
+        "min": 0.0,
+        "max": 0.16,
+        "avg": 0.08
+      },
+      "VOLUME_SURGE": {
+        "min": 0.0,
+        "max": 0.06,
+        "avg": 0.03
+      }
+    },
+    "avg_recalibrations_top3": 7.0
+  },
+  "eliminated_mistakes": [
+    {
+      "player": "P2_correlation_ic",
+      "reason": "score gap >= 20%"
+    },
+    {
+      "player": "P3_random_forest",
+      "reason": "score gap >= 20%"
+    },
+    {
+      "player": "P7_mean_reversion",
+      "reason": "score gap >= 20%"
+    },
+    {
+      "player": "P5_genetic",
+      "reason": "score gap >= 20%"
+    },
+    {
+      "player": "P4_xgboost",
+      "reason": "score gap >= 20%"
+    }
+  ],
+  "indicator_popularity": {
+    "ATR_REGIME": {
+      "players": 1,
+      "avg_weight": 0.2912710535462205
+    },
+    "EMA_CROSS": {
+      "players": 5,
+      "avg_weight": 0.17684924876322244
+    },
+    "BB_POSITION": {
+      "players": 5,
+      "avg_weight": 0.13938181105817643
+    },
+    "WILLR": {
+      "players": 2,
+      "avg_weight": 0.11196359394653466
+    },
+    "CMF": {
+      "players": 4,
+      "avg_weight": 0.10896077599749526
+    },
+    "RSI": {
+      "players": 7,
+      "avg_weight": 0.10318034058765546
+    },
+    "SMA_RATIO": {
+      "players": 4,
+      "avg_weight": 0.10095998803700201
+    },
+    "MACD_HIST": {
+      "players": 6,
+      "avg_weight": 0.09040910255824157
+    },
+    "VWAP_VALUE": {
+      "players": 3,
+      "avg_weight": 0.08880777276932779
+    },
+    "ROC": {
+      "players": 5,
+      "avg_weight": 0.08722200069959088
+    },
+    "ADX_TREND": {
+      "players": 6,
+      "avg_weight": 0.08433880283615726
+    },
+    "KELTNER_POSITION": {
+      "players": 2,
+      "avg_weight": 0.08180696673064083
+    },
+    "OBV_TREND": {
+      "players": 4,
+      "avg_weight": 0.07906444760863683
+    },
+    "AROON": {
+      "players": 4,
+      "avg_weight": 0.07662260891920711
+    },
+    "VOLUME_SURGE": {
+      "players": 2,
+      "avg_weight": 0.07645372346995516
+    },
+    "CCI": {
+      "players": 4,
+      "avg_weight": 0.07073615620292205
+    },
+    "STOCH": {
+      "players": 3,
+      "avg_weight": 0.06307080356040105
+    },
+    "MFI": {
+      "players": 3,
+      "avg_weight": 0.059751207674782945
+    }
+  },
+  "complexity_vs_performance_corr": null,
+  "eliminations": [
+    {
+      "month": "2020-05",
+      "player": "P4_xgboost",
+      "reason": "performance gap"
+    },
+    {
+      "month": "2020-07",
+      "player": "P5_genetic",
+      "reason": "performance gap"
+    },
+    {
+      "month": "2020-08",
+      "player": "P7_mean_reversion",
+      "reason": "performance gap"
+    },
+    {
+      "month": "2020-09",
+      "player": "P3_random_forest",
+      "reason": "performance gap"
+    },
+    {
+      "month": "2020-10",
+      "player": "P2_correlation_ic",
+      "reason": "performance gap"
+    }
+  ]
+}

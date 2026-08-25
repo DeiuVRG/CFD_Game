@@ -61,6 +61,28 @@ metodă a jucătorului.
 - câștigătorul REAL: 0.40·scor test + 0.25·semnificație statistică +
   0.20·bate piața semnificativ + 0.15·stress test.
 
+## Rezultatele rulării pe date reale (2015-2023)
+
+Raport complet: [`results/REPORT.md`](results/REPORT.md) (+ JSON-uri de audit).
+Pe scurt, rularea de referință (7 jucători, seed 42):
+
+- Crash-ul COVID (feb-mar 2020) a prăbușit scorurile tuturor în lunile 2-3;
+  cinci jucători au fost eliminați pe regula gap-ului de 20% între mai și
+  octombrie 2020 (xgboost, genetic, mean_reversion, random_forest,
+  correlation_ic — în această ordine).
+- Supraviețuitori: `equal_weight` și `momentum`. Pe validare, momentum a
+  făcut +27.0% (Sharpe 0.93, maxDD −6.7%).
+- **Pe test (2022-2023, ponderi înghețate) câștigătorul de validare a făcut
+  −0.44%**, bootstrap CI [−1.47, 1.40] → nesemnificativ statistic, nu bate
+  piața (p=0.854); trece doar stress-testul. Ablation: un singur indicator
+  cu impact pozitiv pe test (EMA_CROSS).
+
+Interpretarea onestă (aceeași lecție ca în `RESULTS.md` al repo-ului):
+clasamentul de validare nu garantează nimic out-of-sample; „ponderile
+optime" descoperite au valoare doar ca prior de pornire, iar criteriul care
+separă edge-ul de noroc este semnificația statistică pe date nevăzute — pe
+care nimeni nu a atins-o în această rulare.
+
 ## Abateri documentate față de spec
 
 - **Univers**: 20 de acțiuni lichide S&P 500 în loc de toate cele ~500

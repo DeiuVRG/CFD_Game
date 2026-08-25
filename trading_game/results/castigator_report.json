@@ -1,0 +1,189 @@
+{
+  "identity": {
+    "player_id": "P6_momentum",
+    "method": "Experience-based heuristic: heavy trend/momentum weights; oscillators flipped from contrarian to trend-following (overbought = strength, not a fade).",
+    "recalibrations_used": 7
+  },
+  "final_weights": {
+    "SMA_RATIO": 0.16,
+    "EMA_CROSS": 0.16,
+    "MACD_HIST": 0.14,
+    "ADX_TREND": 0.12,
+    "ROC": 0.12,
+    "AROON": 0.1,
+    "OBV_TREND": 0.08,
+    "RSI": 0.06,
+    "VOLUME_SURGE": 0.06
+  },
+  "orientations": {
+    "RSI": -1.0
+  },
+  "performance_validation": {
+    "total_return_pct": 27.02486573614935,
+    "sharpe": 0.9344462762745365,
+    "sortino": 1.0745573462959845,
+    "calmar": 1.898964841288146,
+    "max_drawdown": -0.06655399716872074,
+    "win_rate": 0.45098039215686275,
+    "profit_factor": 3.0747124838893796,
+    "n_trades": 51,
+    "composite_score": 0.6419085779874449
+  },
+  "performance_test": {
+    "total_return_pct": -0.43800972160413787,
+    "sharpe": -0.1643431067955508,
+    "sortino": -0.2241703812712184,
+    "calmar": 0.025995182379981926,
+    "max_drawdown": -0.1188340319528196,
+    "win_rate": 0.24,
+    "profit_factor": 0.3508469286795485,
+    "n_trades": 50,
+    "composite_score": 0.06751255612696253,
+    "confidence_interval": [
+      -1.474721757492553,
+      1.3993639497292207
+    ],
+    "statistically_significant": false,
+    "beats_market": false,
+    "beats_market_significant": false,
+    "p_value_vs_market": 0.854
+  },
+  "regime_breakdown": {
+    "low_volatility": 0.0,
+    "bull_market": 0.5954377274225786,
+    "high_volatility": 0.35051954894588544,
+    "sideways": 0.0,
+    "bear_market": 0.0
+  },
+  "stress_test": {
+    "scenarios": {
+      "covid_crash_2020": {
+        "max_drawdown": -0.06655399716872074,
+        "survives": true
+      },
+      "bear_market_2022": {
+        "max_drawdown": -0.09266332110328268,
+        "survives": true
+      },
+      "worst_auto_window": {
+        "max_drawdown": -0.06655399716872074,
+        "survives": true
+      }
+    },
+    "pass_stress_test": true
+  },
+  "indicator_importance_ablation": {
+    "EMA_CROSS": {
+      "impact": 0.011391474163617729,
+      "weight": 0.16,
+      "efficiency": 0.07119671352261081
+    },
+    "AROON": {
+      "impact": 0.0038088619515202204,
+      "weight": 0.1,
+      "efficiency": 0.038088619515202204
+    },
+    "ROC": {
+      "impact": -0.0024088703893275637,
+      "weight": 0.12,
+      "efficiency": -0.020073919911063033
+    },
+    "MACD_HIST": {
+      "impact": -0.005162100237630474,
+      "weight": 0.14,
+      "efficiency": -0.036872144554503376
+    },
+    "ADX_TREND": {
+      "impact": -0.006560060554792829,
+      "weight": 0.12,
+      "efficiency": -0.054667171289940246
+    },
+    "SMA_RATIO": {
+      "impact": -0.007052086995991247,
+      "weight": 0.16,
+      "efficiency": -0.04407554372494529
+    },
+    "RSI": {
+      "impact": -0.01687341285305402,
+      "weight": 0.06,
+      "efficiency": -0.28122354755090034
+    },
+    "VOLUME_SURGE": {
+      "impact": -0.03036770540150327,
+      "weight": 0.06,
+      "efficiency": -0.5061284233583878
+    },
+    "OBV_TREND": {
+      "impact": -0.03392272272451688,
+      "weight": 0.08,
+      "efficiency": -0.424034034056461
+    }
+  },
+  "notable_trades": {
+    "worst": [
+      {
+        "date": "2021-11-01",
+        "symbol": "BA",
+        "quantity": 36.0,
+        "entry": 254.72999572753906,
+        "exit": 214.5800018310547,
+        "cost": 13.905121655399782,
+        "profit": -1459.3049019288374
+      },
+      {
+        "date": "2021-12-01",
+        "symbol": "WMT",
+        "quantity": 186.0,
+        "entry": 46.902915954589844,
+        "exit": 42.94189453125,
+        "cost": 14.377491778777667,
+        "profit": -751.1274765199886
+      },
+      {
+        "date": "2021-01-04",
+        "symbol": "PFE",
+        "quantity": 346.0,
+        "entry": 29.36456298828125,
+        "exit": 27.42728614807129,
+        "cost": 17.082391172669436,
+        "profit": -687.3801778853159
+      }
+    ],
+    "best": [
+      {
+        "date": "2021-10-01",
+        "symbol": "GOOGL",
+        "quantity": 87.0,
+        "entry": 65.28707885742188,
+        "exit": 135.34288024902344,
+        "cost": 21.195053281253003,
+        "profit": 6073.6596677880825
+      },
+      {
+        "date": "2021-09-01",
+        "symbol": "XOM",
+        "quantity": 272.0,
+        "entry": 30.847612380981445,
+        "exit": 45.125240325927734,
+        "cost": 22.095131806675884,
+        "profit": 3861.4196692187147
+      },
+      {
+        "date": "2021-10-01",
+        "symbol": "CSCO",
+        "quantity": 266.0,
+        "entry": 37.0294075012207,
+        "exit": 47.946048736572266,
+        "cost": 22.95842362169759,
+        "profit": 2880.868144981818
+      }
+    ]
+  },
+  "final_score_breakdown": {
+    "final_score": 0.17565477132824575,
+    "test_score_adjusted": 0.06413692832061439,
+    "is_significant": false,
+    "beats_market": false,
+    "passes_stress": true
+  }
+}
