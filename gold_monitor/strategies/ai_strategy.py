@@ -14,14 +14,31 @@ logger = logging.getLogger(__name__)
 
 
 class AIStrategy(BaseStrategy):
-    """XGBoost AI strategy - predicts BUY/SELL/HOLD with confidence."""
+    """XGBoost AI strategy - predicts BUY/SELL/HOLD with confidence.
 
-    def __init__(self, model_path: str = None):
-        super().__init__(name="AI", timeframe="MINUTE_5")
+    v3 execution model: analyze() must be fed TRAIN_INTERVAL (1h) candles -
+    the same timeframe the model was trained and backtested on. SL/TP and the
+    confidence threshold come from the per-instrument config when set.
+    """
+
+    def __init__(self, model_path: str = None, instrument=None):
+        super().__init__(name="AI", timeframe="HOUR")
+        self.instrument = instrument
         self.predictor = GoldPredictor(model_path=model_path)
         self._loaded = self.predictor.load()
         if not self._loaded:
             logger.warning(f"AI model not loaded from {model_path or 'default'}. Run --train first.")
+
+    def _sl_atr(self) -> float:
+        return self.instrument.sl_atr() if self.instrument else STRATEGY.SCALP_ATR_SL
+
+    def _tp_atr(self) -> float:
+        return self.instrument.tp_atr() if self.instrument else STRATEGY.SCALP_ATR_TP
+
+    def _confidence_threshold(self) -> float:
+        if self.instrument:
+            return self.instrument.confidence_threshold()
+        return AI.CONFIDENCE_THRESHOLD
 
     def get_required_candles(self) -> int:
         return 60  # Need enough for indicators + features
@@ -41,7 +58,7 @@ class AIStrategy(BaseStrategy):
         # Predict
         signal_val, confidence, probs = self.predictor.predict(features)
 
-        if confidence < AI.CONFIDENCE_THRESHOLD:
+        if confidence < self._confidence_threshold():
             return None
 
         if signal_val == 0:  # HOLD
@@ -55,12 +72,12 @@ class AIStrategy(BaseStrategy):
 
         if signal_val == 1:  # BUY
             direction = "BUY"
-            sl = price - (atr * STRATEGY.SCALP_ATR_SL)
-            tp = price + (atr * STRATEGY.SCALP_ATR_TP)
+            sl = price - (atr * self._sl_atr())
+            tp = price + (atr * self._tp_atr())
         else:  # SELL
             direction = "SELL"
-            sl = price + (atr * STRATEGY.SCALP_ATR_SL)
-            tp = price - (atr * STRATEGY.SCALP_ATR_TP)
+            sl = price + (atr * self._sl_atr())
+            tp = price - (atr * self._tp_atr())
 
         logger.info(
             f"[AI] {direction} signal on {epic} | "

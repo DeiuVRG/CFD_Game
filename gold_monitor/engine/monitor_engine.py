@@ -26,12 +26,19 @@ logger = logging.getLogger(__name__)
 
 
 class InstrumentMonitor:
-    """Monitors a single instrument with its own fetcher, strategies, and state."""
+    """Monitors a single instrument with its own fetcher, strategies, and state.
+
+    v3 execution model note: the AI path runs on TRAIN_INTERVAL candles (1h,
+    fetched separately over AI_HISTORY_PERIOD) - the same timeframe the model
+    was trained and backtested on. The 5m candles are only used for display
+    and for the scalping/momentum strategies.
+    """
 
     def __init__(self, instrument: InstrumentConfig):
         self.instrument = instrument
         self.fetcher = MarketFetcher(instrument)
-        self.ai_strategy = AIStrategy(model_path=instrument.MODEL_PATH)
+        self.ai_strategy = AIStrategy(model_path=instrument.MODEL_PATH,
+                                      instrument=instrument)
         self.scalping = ScalpingStrategy()
         self.momentum = MomentumStrategy()
 
@@ -40,6 +47,10 @@ class InstrumentMonitor:
         self.last_ai_probs: dict = {}
         self.last_analysis_time: float = 0
 
+        # AI candles cache (TRAIN_INTERVAL timeframe; refreshed periodically)
+        self._ai_df: Optional[pd.DataFrame] = None
+        self._ai_df_time: float = 0
+
         # Display values
         self.price: float = 0
         self.prev_close: float = 0
@@ -47,7 +58,8 @@ class InstrumentMonitor:
         self.change_pct: float = 0
         self.rsi: float = 50.0
         self.macd_hist: float = 0.0
-        self.adx: float = 0.0
+        self.adx: float = 0.0        # 5m ADX (display + scalp/momentum regime)
+        self.adx_1h: float = 0.0     # TRAIN_INTERVAL ADX (AI regime gate)
         self.atr: float = 0.0
         self.session_active: bool = True
 
@@ -58,6 +70,24 @@ class InstrumentMonitor:
     @property
     def ai_ready(self) -> bool:
         return self.ai_strategy.predictor.is_ready
+
+    def get_ai_candles(self) -> pd.DataFrame:
+        """TRAIN_INTERVAL candles for the AI path (cached; a new 1h candle
+        only appears hourly, so no need to refetch every cycle)."""
+        now = time.time()
+        if (self._ai_df is not None
+                and now - self._ai_df_time < MONITOR.AI_CANDLE_REFRESH_SEC):
+            return self._ai_df
+
+        df = self.fetcher.get_candles(
+            period=self.instrument.AI_HISTORY_PERIOD,
+            interval=self.instrument.TRAIN_INTERVAL,
+        )
+        if not df.empty:
+            self._ai_df = df
+            self._ai_df_time = now
+
+        return self._ai_df if self._ai_df is not None else pd.DataFrame()
 
 
 class MonitorEngine:
@@ -212,21 +242,42 @@ class MonitorEngine:
 
         return None
 
-    def _run_analysis(self, mon: InstrumentMonitor, df: pd.DataFrame) -> Optional[Signal]:
+    def _run_analysis(self, mon: InstrumentMonitor,
+                      df_5m: pd.DataFrame,
+                      df_ai: pd.DataFrame) -> Optional[Signal]:
+        """v3 execution model: the AI strategy analyzes TRAIN_INTERVAL (1h)
+        candles - the timeframe it was trained/backtested on - and its ADX
+        regime gate is computed on the same 1h series. Scalping/momentum keep
+        using the 5m candles and the 5m ADX regime."""
         epic = mon.display_name
         regime = self._get_market_regime(mon.adx)
 
-        ai_signal = mon.ai_strategy.analyze(epic, df)
-        scalp_signal = mon.scalping.analyze(epic, df)
-        mom_signal = mon.momentum.analyze(epic, df)
+        # --- AI path: 1h candles + 1h ADX gate ---
+        ai_signal = None
+        if not df_ai.empty and len(df_ai) >= 60:
+            adx_1h_series = Indicators.adx(
+                df_ai["high"], df_ai["low"], df_ai["close"], 14
+            )
+            adx_1h = adx_1h_series.iloc[-1]
+            mon.adx_1h = float(adx_1h) if not pd.isna(adx_1h) else 0.0
 
-        # Update AI probabilities for display
-        if mon.ai_strategy.predictor.is_ready:
-            features = FeatureEngineer.create_features(df)
-            if not features.empty and not features.iloc[-1].isna().any():
-                _, mon.last_ai_confidence, mon.last_ai_probs = (
-                    mon.ai_strategy.predictor.predict(features)
-                )
+            if mon.adx_1h >= mon.instrument.adx_min():
+                ai_signal = mon.ai_strategy.analyze(epic, df_ai)
+
+            # Update AI probabilities for display (on the AI timeframe)
+            if mon.ai_strategy.predictor.is_ready:
+                features = FeatureEngineer.create_features(df_ai)
+                if not features.empty and not features.iloc[-1].isna().any():
+                    _, mon.last_ai_confidence, mon.last_ai_probs = (
+                        mon.ai_strategy.predictor.predict(features)
+                    )
+
+        # --- Classic strategies: 5m candles, gated by the 5m ADX regime ---
+        scalp_signal = None
+        mom_signal = None
+        if mon.adx >= STRATEGY.REGIME_ADX_THRESHOLD:
+            scalp_signal = mon.scalping.analyze(epic, df_5m)
+            mom_signal = mon.momentum.analyze(epic, df_5m)
 
         combined = self._vote_signals(ai_signal, scalp_signal, mom_signal, regime)
         return combined
@@ -284,9 +335,12 @@ class MonitorEngine:
                 mon.adx = float(adx_series.iloc[-1]) if not pd.isna(adx_series.iloc[-1]) else 0
                 mon.atr = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else 0
 
-                # Only generate new signals during active session AND trending market
-                if mon.session_active and mon.adx >= STRATEGY.REGIME_ADX_THRESHOLD:
-                    signal = self._run_analysis(mon, df)
+                # Only generate new signals during an active session.
+                # Per-path regime gates: AI is gated by the 1h ADX (inside
+                # _run_analysis), scalping/momentum by the 5m ADX.
+                if mon.session_active:
+                    df_ai = mon.get_ai_candles()
+                    signal = self._run_analysis(mon, df, df_ai)
 
                     if signal:
                         is_new = (
