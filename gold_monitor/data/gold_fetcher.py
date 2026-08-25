@@ -8,6 +8,7 @@ import requests
 import yfinance as yf
 
 from config.settings import InstrumentConfig, TWELVEDATA_API_KEY
+from data.fetch_utils import retry_call, get_yf_session
 
 # Suppress yfinance "possibly delisted" spam when market is closed
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
@@ -325,8 +326,11 @@ class MarketFetcher:
 
         # Fallback: Yahoo Finance for prev_close
         try:
-            ticker = yf.Ticker(self.instrument.SYMBOL)
-            df = ticker.history(period="5d", interval="1d")
+            def _download():
+                ticker = yf.Ticker(self.instrument.SYMBOL, session=get_yf_session())
+                return ticker.history(period="5d", interval="1d")
+
+            df = retry_call(_download, what=f"initial price {self.instrument.SYMBOL}")
             if not df.empty:
                 price = float(df["Close"].iloc[-1])
                 prev_close = float(df["Close"].iloc[-2]) if len(df) > 1 else float(df["Open"].iloc[0])
@@ -363,9 +367,17 @@ class MarketFetcher:
         interval = interval or self.instrument.CANDLE_INTERVAL
 
         try:
-            ticker = yf.Ticker(self.instrument.SYMBOL)
-            df = ticker.history(period=period, interval=interval)
-            if df.empty:
+            def _download():
+                ticker = yf.Ticker(self.instrument.SYMBOL, session=get_yf_session())
+                return ticker.history(period=period, interval=interval)
+
+            # Retry with backoff; an instrument with no candles (e.g. gold on
+            # a weekend) comes back as an empty frame, never as a crash.
+            df = retry_call(
+                _download,
+                what=f"candles {self.instrument.SYMBOL} {interval}/{period}",
+            )
+            if df is None or df.empty:
                 return pd.DataFrame()
 
             df = df.reset_index()

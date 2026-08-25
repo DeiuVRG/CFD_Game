@@ -23,6 +23,16 @@ class TrackedPosition:
     close_reason: Optional[str] = None
     # 24/7 instruments (crypto) are exempt from the end-of-day forced close
     eod_close: bool = True
+    # Link back to the persisted signal row + round-trip cost at entry (in %)
+    signal_id: Optional[int] = None
+    cost_pct: float = 0.0
+
+    @property
+    def pnl_net_pct(self) -> float:
+        """Hypothetical net P&L: gross minus the instrument's round-trip cost."""
+        if self.close_price is None:
+            return 0.0
+        return self.pnl_pct - self.cost_pct
     # Trailing SL state
     highest_price: float = 0.0    # For BUY positions
     lowest_price: float = 999999  # For SELL positions
@@ -87,11 +97,17 @@ class TrackedPosition:
 
 
 class PositionTracker:
-    """Tracks open positions with trailing SL and EOD close support."""
+    """Tracks open positions with trailing SL and EOD close support.
 
-    def __init__(self):
+    When a SignalStore is attached, every close also fills the hypothetical
+    outcome (TP/SL/EOD/..., exit price, gross and net P&L) of the signal
+    that opened the position.
+    """
+
+    def __init__(self, store=None):
         self._positions: dict[str, TrackedPosition] = {}
         self._history: list[TrackedPosition] = []
+        self._store = store
 
     def has_position(self, instrument: str) -> bool:
         pos = self._positions.get(instrument)
@@ -105,7 +121,8 @@ class PositionTracker:
 
     def open_position(self, instrument: str, direction: str, entry_price: float,
                       stop_loss: float, take_profit: float, strategy_name: str,
-                      eod_close: bool = True) -> TrackedPosition:
+                      eod_close: bool = True, signal_id: int = None,
+                      cost_pct: float = 0.0) -> TrackedPosition:
         if self.has_position(instrument):
             self.close_position(instrument, entry_price, "SIGNAL_REVERSED")
 
@@ -117,6 +134,8 @@ class PositionTracker:
             take_profit=take_profit,
             strategy_name=strategy_name,
             eod_close=eod_close,
+            signal_id=signal_id,
+            cost_pct=cost_pct,
         )
         self._positions[instrument] = pos
         logger.info(f"Position opened: {direction} {instrument} @ {entry_price}")
@@ -136,6 +155,20 @@ class PositionTracker:
             f"Position closed: {pos.direction} {instrument} @ {close_price} "
             f"reason={reason} pnl={pos.pnl_pct:+.2f}%"
         )
+
+        # Fill the hypothetical outcome of the originating signal
+        if self._store is not None and pos.signal_id is not None:
+            try:
+                self._store.record_outcome(
+                    signal_id=pos.signal_id,
+                    outcome=reason,
+                    exit_price=close_price,
+                    pnl_gross_pct=pos.pnl_pct,
+                    pnl_net_pct=pos.pnl_net_pct,
+                )
+            except Exception as e:
+                logger.error(f"Failed to record signal outcome: {e}")
+
         return pos
 
     def check_sl_tp(self, instrument: str, current_price: float,

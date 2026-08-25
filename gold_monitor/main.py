@@ -168,6 +168,43 @@ def cmd_optimize(instrument_filter: str = None):
             print(f"      ADX filter >= {best.adx_filter}")
 
 
+def cmd_report():
+    """Signal-collection report: per instrument, from signals.db."""
+    from data.signal_store import SignalStore, DEFAULT_DB_PATH
+
+    if not os.path.exists(DEFAULT_DB_PATH):
+        print("No signals database yet (data/signals.db).")
+        print("Run --monitor for a while to collect signals first.")
+        return
+
+    store = SignalStore()
+    report = store.compute_report()
+
+    if not report:
+        print("Signals database is empty.")
+        return
+
+    print(f"\n{'=' * 78}")
+    print("  SIGNAL COLLECTION REPORT (hypothetical outcomes, net of costs)")
+    print(f"{'=' * 78}")
+    header = (f"  {'Instrument':<22} {'Signals':>7} {'Closed':>6} {'WinRate':>8} "
+              f"{'AvgNet%':>8} {'HypoRet%':>9} {'MaxDD%':>7}")
+    print(header)
+    print(f"  {'-' * 74}")
+    for inst, s in sorted(report.items()):
+        print(f"  {inst:<22} {s['signals']:>7} {s['closed']:>6} "
+              f"{s['win_rate']:>7.1%} {s['avg_net_expectancy_pct']:>+8.3f} "
+              f"{s['hypothetical_return_pct']:>+9.2f} {s['max_drawdown_pct']:>7.2f}")
+        if s["outcomes"]:
+            outcomes = ", ".join(f"{k}: {v}" for k, v in sorted(s["outcomes"].items()))
+            print(f"      outcomes: {outcomes}")
+
+    csv_path = os.path.join("output", "signals_export.csv")
+    n = store.export_csv(csv_path)
+    print(f"\n  Exported {n} signals to {csv_path} (external audit)")
+    print(f"{'=' * 78}")
+
+
 def cmd_test_discord():
     from notifications.discord_notify import DiscordNotifier
     from config.settings import DISCORD
@@ -195,6 +232,8 @@ def main():
                        help="Walk-forward backtest (re-trains periodically)")
     group.add_argument("--optimize", nargs="?", const="all", metavar="INSTRUMENT",
                        help="Find optimal SL/TP/confidence parameters")
+    group.add_argument("--report", action="store_true",
+                       help="Signal collection report (win rate, expectancy, CSV export)")
     group.add_argument("--test-discord", action="store_true", help="Test Discord webhook")
 
     args = parser.parse_args()
@@ -214,6 +253,8 @@ def main():
     elif args.optimize is not None:
         instrument_filter = None if args.optimize == "all" else args.optimize
         cmd_optimize(instrument_filter)
+    elif args.report:
+        cmd_report()
     elif args.test_discord:
         cmd_test_discord()
 

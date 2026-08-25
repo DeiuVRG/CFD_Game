@@ -14,6 +14,7 @@ from ai.model import GoldPredictor
 from config.settings import INSTRUMENTS, MONITOR, STRATEGY, AI, COSTS, InstrumentConfig
 from data.gold_fetcher import MarketFetcher, fetch_all_prices_batch
 from data.indicators import Indicators
+from data.signal_store import SignalStore, model_version
 from engine.signal import Signal
 from engine.position_tracker import PositionTracker
 from notifications.discord_notify import DiscordNotifier
@@ -97,7 +98,13 @@ class MonitorEngine:
 
     def __init__(self):
         self.discord = DiscordNotifier()
-        self.position_tracker = PositionTracker()
+        try:
+            self.signal_store = SignalStore()
+        except Exception as e:
+            logger.error(f"Signal store unavailable: {e}")
+            self.signal_store = None
+        self.position_tracker = PositionTracker(store=self.signal_store)
+        self._model_versions: dict[str, str] = {}
         self.is_running = False
         self._pending_command: Optional[str] = None
         self._last_retrain_time: float = 0
@@ -124,8 +131,18 @@ class MonitorEngine:
                     "adx", "rsi", "session",
                 ])
 
-    def _log_signal(self, instrument: str, signal: Signal, confidence: float,
-                    probs: dict, adx: float, rsi: float, session: bool):
+    def _model_version(self, mon: InstrumentMonitor) -> str:
+        path = mon.instrument.MODEL_PATH
+        if path not in self._model_versions:
+            self._model_versions[path] = model_version(path)
+        return self._model_versions[path]
+
+    def _log_signal(self, mon: InstrumentMonitor, signal: Signal,
+                    confidence: float, probs: dict, adx: float, rsi: float,
+                    session: bool):
+        """Persist a signal: CSV (legacy, human-friendly) + SQLite
+        (append-only, with model version). Returns the SQLite row id."""
+        instrument = mon.display_name
         with open(self._signal_log_path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
@@ -135,6 +152,26 @@ class MonitorEngine:
                 probs.get("BUY", 0), probs.get("SELL", 0),
                 round(adx, 1), round(rsi, 1), session,
             ])
+
+        if self.signal_store is None:
+            return None
+        try:
+            return self.signal_store.insert_signal(
+                instrument=instrument,
+                direction=signal.direction,
+                confidence=round(confidence, 4) if confidence else None,
+                probabilities=probs,
+                adx=round(mon.adx_1h or adx, 2),
+                regime=self._get_market_regime(mon.adx_1h or adx),
+                entry_price=signal.entry_price,
+                stop_loss=signal.stop_loss,
+                take_profit=signal.take_profit,
+                strategy=signal.strategy_name,
+                model_ver=self._model_version(mon),
+            )
+        except Exception as e:
+            logger.error(f"Failed to persist signal: {e}")
+            return None
 
     @staticmethod
     def _is_session_active(instrument: InstrumentConfig = None,
@@ -375,12 +412,14 @@ class MonitorEngine:
                                 confidence=mon.last_ai_confidence,
                                 probabilities=mon.last_ai_probs,
                             )
-                            self._log_signal(
-                                mon.display_name, signal,
+                            signal_id = self._log_signal(
+                                mon, signal,
                                 mon.last_ai_confidence, mon.last_ai_probs,
                                 mon.adx, mon.rsi, mon.session_active,
                             )
 
+                            cost_pct = COSTS.round_trip_cost_pct(
+                                mon.instrument, signal.entry_price) * 100
                             self.position_tracker.open_position(
                                 instrument=mon.display_name,
                                 direction=signal.direction,
@@ -389,6 +428,8 @@ class MonitorEngine:
                                 take_profit=signal.take_profit,
                                 strategy_name=signal.strategy_name,
                                 eod_close=not mon.instrument.SESSION_24_7,
+                                signal_id=signal_id,
+                                cost_pct=cost_pct,
                             )
                     else:
                         mon.last_signal = None
