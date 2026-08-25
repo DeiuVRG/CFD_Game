@@ -1,5 +1,7 @@
 import os
 from dataclasses import dataclass, field
+from typing import Optional
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -7,21 +9,66 @@ load_dotenv()
 
 @dataclass
 class InstrumentConfig:
-    """Configuration for a single tradeable instrument."""
+    """Configuration for a single tradeable instrument.
+
+    Cost model:
+      - Default: absolute spread = SPREAD_PIPS * PIP_VALUE (price units).
+      - If SPREAD_PCT is set (> 0) it takes priority and is interpreted as the
+        ROUND-TRIP spread cost as a fraction of price (e.g. 0.003 = 0.30%).
+        This is the natural model for crypto CFDs where spread scales with price.
+
+    Per-instrument strategy parameters (SL_ATR .. MIN_RR) override the global
+    STRATEGY/AI defaults when set; they are populated by the optimizer.
+    """
     SYMBOL: str              # yfinance ticker (for candles/training)
     SYMBOL_DISPLAY: str      # Human-readable name
     MODEL_PATH: str          # Path to trained XGBoost model
     TWELVEDATA_SYMBOL: str = ""  # Twelve Data symbol for real-time prices
     TV_SYMBOL: str = ""      # TradingView symbol for real-time spot prices
-    TV_EXCHANGE: str = "cfd"  # TradingView scan endpoint (cfd or forex)
+    TV_EXCHANGE: str = "cfd"  # TradingView scan endpoint (cfd, forex or crypto)
     CANDLE_INTERVAL: str = "5m"
     HISTORY_PERIOD: str = "5d"
     TRAIN_PERIOD: str = "2y"
     TRAIN_INTERVAL: str = "1h"
+    # Period used by the live monitor to fetch TRAIN_INTERVAL candles for the
+    # AI path (must cover enough candles for features: >= 60 x 1h).
+    AI_HISTORY_PERIOD: str = "30d"
     PRICE_CHANGE_THRESHOLD: float = 0.005
+    # Label threshold grid searched by the optimizer. Empty = only
+    # PRICE_CHANGE_THRESHOLD is used.
+    THRESHOLD_GRID: list = field(default_factory=list)
     SPREAD_PIPS: float = 3.0   # Typical spread in pips (for cost modeling)
     PIP_VALUE: float = 0.01    # Value of 1 pip in price units
+    SPREAD_PCT: float = 0.0    # Optional ROUND-TRIP spread as fraction of price
+    # Session handling: gold/FX use the global session window; 24/7 markets
+    # (crypto) set SESSION_24_7=True and skip the EOD forced close.
+    SESSION_24_7: bool = False
     ENABLED: bool = True
+    # --- Per-instrument strategy overrides (None -> global defaults) ---
+    SL_ATR: Optional[float] = None          # Stop-loss distance in ATR multiples
+    TP_ATR: Optional[float] = None          # Take-profit distance in ATR multiples
+    CONFIDENCE: Optional[float] = None      # Min AI confidence to act
+    ADX_MIN: Optional[float] = None         # Min ADX (trend gate) to trade
+    MIN_RR: Optional[float] = None          # Min reward:risk ratio
+
+    # Resolved accessors (fall back to global STRATEGY/AI config)
+    def sl_atr(self) -> float:
+        return self.SL_ATR if self.SL_ATR is not None else STRATEGY.SCALP_ATR_SL
+
+    def tp_atr(self) -> float:
+        return self.TP_ATR if self.TP_ATR is not None else STRATEGY.SCALP_ATR_TP
+
+    def confidence_threshold(self) -> float:
+        return self.CONFIDENCE if self.CONFIDENCE is not None else AI.CONFIDENCE_THRESHOLD
+
+    def adx_min(self) -> float:
+        return self.ADX_MIN if self.ADX_MIN is not None else STRATEGY.REGIME_ADX_THRESHOLD
+
+    def min_rr(self) -> float:
+        return self.MIN_RR if self.MIN_RR is not None else 1.5
+
+    def threshold_grid(self) -> list:
+        return self.THRESHOLD_GRID or [self.PRICE_CHANGE_THRESHOLD]
 
 
 # Twelve Data API key (free tier: 800 req/day, 8/min)
@@ -72,6 +119,9 @@ class MonitorConfig:
     FETCH_INTERVAL_SEC: int = 10  # 10 sec (TradingView is free)
     ANALYSIS_INTERVAL_SEC: int = 60
     CANDLE_LOOKBACK: int = 100
+    # AI candles (TRAIN_INTERVAL timeframe) are refreshed at most this often;
+    # a new 1h candle only appears hourly so 5 min is plenty.
+    AI_CANDLE_REFRESH_SEC: int = 300
 
 
 @dataclass
@@ -152,11 +202,23 @@ class CostConfig:
     COMMISSION_PCT: float = 0.0    # XTB CFDs: no commission (spread only)
     SLIPPAGE_MULTIPLIER: float = 0.5  # Slippage = 0.5x spread on fast markets
 
+    def round_trip_cost_pct(self, instrument: InstrumentConfig, price: float) -> float:
+        """Total ROUND-TRIP cost as a fraction of price (spread + slippage).
+
+        Priority: SPREAD_PCT (already round-trip) if set, otherwise the
+        pip-based absolute spread model (one-way spread doubled).
+        """
+        if instrument.SPREAD_PCT > 0:
+            base = instrument.SPREAD_PCT
+        else:
+            if price <= 0:
+                return 0.0
+            base = (instrument.SPREAD_PIPS * instrument.PIP_VALUE) / price * 2
+        return base * (1 + self.SLIPPAGE_MULTIPLIER) + self.COMMISSION_PCT * 2
+
     def get_total_cost_pct(self, instrument: InstrumentConfig, price: float) -> float:
-        """Total round-trip cost as percentage of price."""
-        spread_cost = (instrument.SPREAD_PIPS * instrument.PIP_VALUE) / price
-        slippage = spread_cost * self.SLIPPAGE_MULTIPLIER
-        return (spread_cost + slippage + self.COMMISSION_PCT) * 2  # *2 for round-trip
+        """Backwards-compatible alias for round_trip_cost_pct."""
+        return self.round_trip_cost_pct(instrument, price)
 
 
 # Global instances

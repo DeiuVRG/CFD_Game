@@ -1,24 +1,30 @@
 """
-Parameter optimizer - grid search over SL/TP/confidence/threshold combinations.
-Tests hundreds of parameter combos to find the most profitable setup.
+Parameter optimizer - grid search over SL/TP/confidence/ADX/label-threshold
+combinations, executed through the SAME v3 execution engine as the backtester
+(next-open entries, wick-based SL/TP, SL-first, gap handling).
+
+Split discipline: the model is trained on the first 50% of the data and every
+parameter combo is scored on the middle 25% (optimization window). The last
+25% is NEVER touched here - it is reserved for the one-shot out-of-sample run
+in the backtester.
 """
 import numpy as np
 import pandas as pd
 import logging
 from itertools import product
 from dataclasses import dataclass
-from typing import Optional
 
+from ai.backtester import Backtester, BacktestMetrics, ExecutionState
 from ai.feature_engineer import FeatureEngineer
 from ai.model import GoldPredictor
-from config.settings import InstrumentConfig, COSTS, AI
-from data.indicators import Indicators
+from config.settings import InstrumentConfig, AI
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class OptimResult:
+    threshold: float   # Label threshold (PRICE_CHANGE_THRESHOLD) used
     sl_atr: float
     tp_atr: float
     confidence_threshold: float
@@ -26,228 +32,165 @@ class OptimResult:
     adx_filter: float  # Minimum ADX to trade
     total_return: float
     sharpe: float
+    trade_sharpe: float
     win_rate: float
     profit_factor: float
     max_drawdown: float
     total_trades: int
     avg_pnl: float
 
+    @property
+    def score(self) -> float:
+        """Composite ranking score (consistency x profitability)."""
+        pf = min(self.profit_factor, 10.0)  # Cap inf/huge PF from tiny samples
+        return self.sharpe * pf
+
+
+# Parameter grid (shared by all instruments)
+SL_ATR_RANGE = [1.0, 1.5, 2.0, 2.5]
+TP_ATR_RANGE = [1.5, 2.0, 2.5, 3.0, 4.0]
+CONF_RANGE = [0.45, 0.50, 0.55, 0.60]
+MIN_RR_RANGE = [1.0, 1.5, 2.0]
+ADX_FILTER_RANGE = [0, 15, 20, 25]
+
+# Minimum trades in the optimization window for a combo to be considered a
+# reliable candidate (defined BEFORE looking at any OOS data).
+MIN_TRADES_FOR_SELECTION = 15
+
 
 def optimize_instrument(instrument: InstrumentConfig, df: pd.DataFrame) -> list:
     """
-    Grid search over key parameters to find optimal setup.
+    Grid search over label threshold + execution parameters.
     Returns sorted list of OptimResult (best first).
     """
     print(f"\n{'='*60}")
     print(f"  OPTIMIZER: {instrument.SYMBOL_DISPLAY}")
     print(f"{'='*60}")
 
-    # Create features and labels
     features = FeatureEngineer.create_features(df)
-    labels = FeatureEngineer.create_labels(
-        df, horizon=AI.PREDICTION_HORIZON,
-        threshold=instrument.PRICE_CHANGE_THRESHOLD,
-    )
+    bt = Backtester(instrument)
 
-    valid_mask = features.notna().all(axis=1) & labels.notna()
-    valid_indices = valid_mask[valid_mask].index.tolist()
+    thresholds = instrument.threshold_grid()
+    print(f"  Label threshold grid: {thresholds}")
 
-    if len(valid_indices) < 300:
-        print("  Not enough data for optimization")
-        return []
+    all_results: list = []
 
-    # Split: train on first 50%, optimize on next 25%, validate on last 25%
-    n = len(valid_indices)
-    train_end = int(n * 0.50)
-    optim_end = int(n * 0.75)
+    for threshold in thresholds:
+        labels = FeatureEngineer.create_labels(
+            df, horizon=AI.PREDICTION_HORIZON, threshold=threshold,
+        )
 
-    train_idx = valid_indices[:train_end]
-    optim_idx = valid_indices[train_end:optim_end]
-    valid_idx = valid_indices[optim_end:]
+        valid_mask = features.notna().all(axis=1) & labels.notna()
+        valid_indices = valid_mask[valid_mask].index.tolist()
 
-    # Train model once
-    X_train = features.loc[train_idx]
-    y_train = labels.loc[train_idx].astype(int)
-
-    print(f"  Training model on {len(train_idx)} samples...")
-    predictor = GoldPredictor(model_path=instrument.MODEL_PATH)
-    metrics = predictor.train(X_train, y_train)
-    print(f"  Model CV accuracy: {metrics['cv_accuracy_mean']*100:.1f}%")
-
-    # Pre-compute predictions for optimization set
-    close = df["close"]
-    high = df["high"]
-    low = df["low"]
-    atr_series = Indicators.atr(high, low, close, 14)
-    adx_series = Indicators.adx(high, low, close, 14)
-
-    print(f"  Pre-computing predictions for {len(optim_idx)} optimization samples...")
-    predictions = []
-    for idx in optim_idx:
-        price = close.iloc[idx]
-        atr = atr_series.iloc[idx]
-        adx = adx_series.iloc[idx]
-
-        if pd.isna(atr) or atr == 0 or pd.isna(adx):
-            predictions.append((idx, price, atr, adx, 0, 0.0))
+        if len(valid_indices) < 300:
+            print(f"  [thr={threshold}] Not enough data for optimization")
             continue
 
-        signal_val, confidence, _ = predictor.predict(features.iloc[:idx + 1])
-        predictions.append((idx, price, atr, adx, signal_val, confidence))
+        # Split: train on first 50%, optimize on next 25%; last 25% untouched.
+        n = len(valid_indices)
+        train_end = int(n * 0.50)
+        optim_end = int(n * 0.75)
 
-    # Parameter grid
-    sl_atr_range = [1.0, 1.5, 2.0, 2.5]
-    tp_atr_range = [1.5, 2.0, 2.5, 3.0, 4.0]
-    conf_range = [0.45, 0.50, 0.55, 0.60]
-    min_rr_range = [1.0, 1.5, 2.0]
-    adx_filter_range = [0, 15, 20, 25]
+        train_idx = valid_indices[:train_end]
+        optim_idx = valid_indices[train_end:optim_end]
 
-    total_combos = (len(sl_atr_range) * len(tp_atr_range) * len(conf_range)
-                    * len(min_rr_range) * len(adx_filter_range))
-    print(f"  Testing {total_combos} parameter combinations...")
+        X_train = features.loc[train_idx]
+        y_train = labels.loc[train_idx].astype(int)
 
-    results = []
-    tested = 0
+        label_counts = y_train.value_counts().to_dict()
+        print(f"\n  [thr={threshold}] Training on {len(train_idx)} samples "
+              f"(labels: {label_counts})...")
+        predictor = GoldPredictor(model_path=instrument.MODEL_PATH)
+        metrics = predictor.train(X_train, y_train)
+        print(f"  [thr={threshold}] Model CV accuracy: "
+              f"{metrics['cv_accuracy_mean']*100:.1f}%")
 
-    for sl_atr, tp_atr, conf_thresh, min_rr, adx_min in product(
-        sl_atr_range, tp_atr_range, conf_range, min_rr_range, adx_filter_range
-    ):
-        # Skip invalid combos (TP must be > SL for positive R:R)
-        if tp_atr <= sl_atr:
-            continue
+        # Pre-compute predictions once per threshold (model is fixed)
+        print(f"  [thr={threshold}] Pre-computing predictions for "
+              f"{len(optim_idx)} optimization samples...")
+        predictions = {}
+        for idx in optim_idx:
+            signal_val, confidence, _ = predictor.predict(features.iloc[:idx + 1])
+            predictions[idx] = (signal_val, confidence)
 
-        rr_ratio = tp_atr / sl_atr
-        if rr_ratio < min_rr:
-            continue
+        def predict_fn(idx: int) -> tuple:
+            return predictions.get(idx, (0, 0.0))
 
-        # Run fast backtest with these params
-        equity = 100000.0
-        position = None
-        trades_pnl = []
+        combos = [
+            (sl, tp, conf, rr, adx)
+            for sl, tp, conf, rr, adx in product(
+                SL_ATR_RANGE, TP_ATR_RANGE, CONF_RANGE,
+                MIN_RR_RANGE, ADX_FILTER_RANGE)
+            if tp > sl and (tp / sl) >= rr
+        ]
+        print(f"  [thr={threshold}] Testing {len(combos)} parameter combinations "
+              f"through the v3 execution engine...")
 
-        spread_cost = (instrument.SPREAD_PIPS * instrument.PIP_VALUE)
+        for sl_atr, tp_atr, conf_thresh, min_rr, adx_min in combos:
+            trades, curve, _ = bt._simulate_trades(
+                predict_fn, df, optim_idx,
+                state=ExecutionState(),
+                sl_atr=sl_atr, tp_atr=tp_atr,
+                conf_threshold=conf_thresh,
+                adx_min=adx_min, min_rr=min_rr,
+            )
 
-        for idx, price, atr, adx, signal_val, confidence in predictions:
-            if pd.isna(atr) or atr == 0:
+            if len(trades) < 5:
                 continue
 
-            round_trip_cost = (spread_cost / price) * 2 * (1 + COSTS.SLIPPAGE_MULTIPLIER)
+            equity_curve = np.array([100000.0] + curve)
+            m = BacktestMetrics.compute_all(trades, equity_curve)
 
-            # Check SL/TP
-            if position is not None:
-                direction, entry, sl, tp, _ = position
+            all_results.append(OptimResult(
+                threshold=threshold,
+                sl_atr=sl_atr, tp_atr=tp_atr,
+                confidence_threshold=conf_thresh, min_rr=min_rr,
+                adx_filter=adx_min,
+                total_return=m["total_return_pct"],
+                sharpe=m["sharpe"],
+                trade_sharpe=m["trade_sharpe"],
+                win_rate=m["win_rate"],
+                profit_factor=m["profit_factor"],
+                max_drawdown=m["max_drawdown"],
+                total_trades=m["total_trades"],
+                avg_pnl=m["avg_trade_pnl"],
+            ))
 
-                hit_sl = False
-                hit_tp = False
+    all_results.sort(key=lambda r: r.score, reverse=True)
 
-                if direction == "BUY":
-                    hit_sl = price <= sl
-                    hit_tp = price >= tp
-                else:
-                    hit_sl = price >= sl
-                    hit_tp = price <= tp
-
-                if hit_sl:
-                    if direction == "BUY":
-                        pnl = (sl - entry) / entry - round_trip_cost
-                    else:
-                        pnl = (entry - sl) / entry - round_trip_cost
-                    trades_pnl.append(pnl)
-                    equity *= (1 + pnl)
-                    position = None
-                elif hit_tp:
-                    if direction == "BUY":
-                        pnl = (tp - entry) / entry - round_trip_cost
-                    else:
-                        pnl = (entry - tp) / entry - round_trip_cost
-                    trades_pnl.append(pnl)
-                    equity *= (1 + pnl)
-                    position = None
-
-            # Open new position
-            if position is None and signal_val != 0 and confidence >= conf_thresh:
-                # ADX filter
-                if adx < adx_min:
-                    continue
-
-                if signal_val == 1:  # BUY
-                    sl = price - (atr * sl_atr)
-                    tp = price + (atr * tp_atr)
-                else:  # SELL
-                    sl = price + (atr * sl_atr)
-                    tp = price - (atr * tp_atr)
-
-                risk = abs(price - sl) / price
-                reward = abs(tp - price) / price
-
-                if reward > round_trip_cost and (reward / risk) >= min_rr:
-                    direction = "BUY" if signal_val == 1 else "SELL"
-                    position = (direction, price, sl, tp, idx)
-
-        if len(trades_pnl) < 5:
-            continue
-
-        # Calculate metrics
-        total_return = (equity / 100000 - 1) * 100
-        wins = sum(1 for p in trades_pnl if p > 0)
-        win_rate = wins / len(trades_pnl)
-
-        gross_profit = sum(p for p in trades_pnl if p > 0)
-        gross_loss = abs(sum(p for p in trades_pnl if p < 0))
-        pf = gross_profit / gross_loss if gross_loss > 0 else 0
-
-        # Sharpe
-        returns_arr = np.array(trades_pnl)
-        sharpe = (np.mean(returns_arr) / np.std(returns_arr) * np.sqrt(252)
-                  if np.std(returns_arr) > 0 else 0)
-
-        # Max drawdown
-        equity_curve = [100000]
-        for pnl in trades_pnl:
-            equity_curve.append(equity_curve[-1] * (1 + pnl))
-        eq = np.array(equity_curve)
-        running_max = np.maximum.accumulate(eq)
-        dd = (eq - running_max) / running_max
-        max_dd = float(np.min(dd))
-
-        results.append(OptimResult(
-            sl_atr=sl_atr, tp_atr=tp_atr,
-            confidence_threshold=conf_thresh, min_rr=min_rr,
-            adx_filter=adx_min,
-            total_return=total_return, sharpe=sharpe,
-            win_rate=win_rate, profit_factor=pf,
-            max_drawdown=max_dd,
-            total_trades=len(trades_pnl),
-            avg_pnl=float(np.mean(returns_arr) * 100),
-        ))
-
-        tested += 1
-
-    # Sort by composite score: Sharpe * profit_factor (rewards consistency + profitability)
-    results.sort(key=lambda r: r.sharpe * r.profit_factor, reverse=True)
-
-    print(f"\n  Tested {tested} valid combinations")
+    print(f"\n  Tested {len(all_results)} valid combinations")
     print(f"\n  TOP 10 PARAMETER COMBINATIONS:")
-    print(f"  {'SL':>5} {'TP':>5} {'Conf':>5} {'RR':>4} {'ADX':>4} | "
+    print(f"  {'Thr':>6} {'SL':>5} {'TP':>5} {'Conf':>5} {'RR':>4} {'ADX':>4} | "
           f"{'Return':>8} {'Sharpe':>7} {'WR':>5} {'PF':>5} {'MaxDD':>7} {'#':>4}")
-    print(f"  {'-'*75}")
+    print(f"  {'-'*82}")
 
-    for r in results[:10]:
+    for r in all_results[:10]:
         print(
-            f"  {r.sl_atr:>5.1f} {r.tp_atr:>5.1f} {r.confidence_threshold:>5.2f} "
+            f"  {r.threshold:>6.3f} {r.sl_atr:>5.1f} {r.tp_atr:>5.1f} "
+            f"{r.confidence_threshold:>5.2f} "
             f"{r.min_rr:>4.1f} {r.adx_filter:>4.0f} | "
             f"{r.total_return:>+7.2f}% {r.sharpe:>7.2f} "
             f"{r.win_rate:>5.1%} {r.profit_factor:>5.2f} "
             f"{r.max_drawdown:>7.2%} {r.total_trades:>4}"
         )
 
-    # Validate best on holdout set
-    if results:
-        best = results[0]
-        print(f"\n  BEST: SL={best.sl_atr}xATR TP={best.tp_atr}xATR "
-              f"Conf={best.confidence_threshold} ADX>{best.adx_filter}")
+    best = select_best(all_results)
+    if best:
+        print(f"\n  BEST (>= {MIN_TRADES_FOR_SELECTION} trades): "
+              f"thr={best.threshold} SL={best.sl_atr}xATR TP={best.tp_atr}xATR "
+              f"Conf={best.confidence_threshold} ADX>{best.adx_filter} RR>={best.min_rr}")
         print(f"  Return={best.total_return:+.2f}% Sharpe={best.sharpe:.2f} "
               f"WR={best.win_rate:.1%} PF={best.profit_factor:.2f}")
 
     print(f"{'='*60}")
-    return results
+    return all_results
+
+
+def select_best(results: list, min_trades: int = MIN_TRADES_FOR_SELECTION):
+    """Best combo with a minimum sample size (avoids tiny-sample flukes).
+    Falls back to the overall best if nothing reaches min_trades."""
+    for r in results:
+        if r.total_trades >= min_trades:
+            return r
+    return results[0] if results else None

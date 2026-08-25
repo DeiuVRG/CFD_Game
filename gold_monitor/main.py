@@ -134,7 +134,7 @@ def cmd_monitor():
 
 def cmd_optimize(instrument_filter: str = None):
     """Find optimal parameters via grid search."""
-    from ai.optimizer import optimize_instrument
+    from ai.optimizer import optimize_instrument, select_best
     from config.settings import INSTRUMENTS
     from data.gold_fetcher import MarketFetcher
 
@@ -157,9 +157,10 @@ def cmd_optimize(instrument_filter: str = None):
 
         results = optimize_instrument(inst, df)
 
-        if results:
-            best = results[0]
+        best = select_best(results)
+        if best:
             print(f"\n  >>> RECOMMENDED for {inst.SYMBOL_DISPLAY}:")
+            print(f"      Label threshold = {best.threshold}")
             print(f"      SL = {best.sl_atr}x ATR")
             print(f"      TP = {best.tp_atr}x ATR")
             print(f"      AI Confidence >= {best.confidence_threshold}")
