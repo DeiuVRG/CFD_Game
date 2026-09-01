@@ -119,9 +119,15 @@ sudo systemctl restart cfd-monitor         # restart
 sudo systemctl stop cfd-monitor            # oprire
 ```
 
-Notă: monitorul are un dashboard de terminal și un listener de tastatură;
-sub systemd nu există TTY, dar asta nu afectează funcționarea (semnalele și
-Discord-ul merg normal; ignora afișajul din journal).
+⚠️ **Bug cunoscut, de reparat ÎNAINTE de primul deploy sub systemd**:
+listener-ul de tastatură (`engine/monitor_engine.py:514`, `_keyboard_listener`)
+face `select()` pe stdin; sub systemd stdin e `/dev/null`, care e mereu
+„readable”, iar `read(1)` întoarce `''` instant → **buclă infinită fără
+sleep, un core la 100%** (verificat: ~1.7M iterații/2s). Fix minim (cod):
+porni thread-ul doar dacă `sys.stdin.isatty()`, sau ieși din buclă la
+`read` gol (EOF). Semnalele și Discord-ul merg oricum, dar CPU-ul arde
+degeaba — pe un Pi e inacceptabil. Dashboard-ul de terminal fără TTY e
+inofensiv (ignoră afișajul din journal).
 
 ### 5. Reantrenare săptămânală (cron)
 
@@ -234,3 +240,6 @@ de trei schimbări mici (nu le-am aplicat — cer acordul întâi):
 3. **Serviciul să nu ruleze ca `root`** (`User=cfd` ca mai sus) și
    comentariul „daily training" corectat în „weekly" (cron-ul e deja
    săptămânal).
+4. **(cod, nu script) listener-ul de tastatură să pornească doar cu TTY** —
+   vezi avertismentul de la pasul A.4; fără acest fix serviciul consumă un
+   core întreg permanent.
