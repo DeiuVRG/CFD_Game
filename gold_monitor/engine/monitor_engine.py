@@ -11,7 +11,8 @@ import pandas as pd
 
 from ai.feature_engineer import FeatureEngineer
 from ai.model import GoldPredictor
-from config.settings import INSTRUMENTS, MONITOR, STRATEGY, AI, COSTS, InstrumentConfig
+from config.settings import (INSTRUMENTS, MONITOR, STRATEGY, AI, COSTS,
+                             InstrumentConfig, parse_interval_hours)
 from data.gold_fetcher import MarketFetcher, fetch_all_prices_batch
 from data.indicators import Indicators
 from data.signal_store import SignalStore, model_version
@@ -146,7 +147,7 @@ class MonitorEngine:
         with open(self._signal_log_path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                datetime.utcnow().isoformat(), instrument, signal.direction,
+                datetime.now(timezone.utc).isoformat(), instrument, signal.direction,
                 signal.entry_price, signal.stop_loss, signal.take_profit,
                 signal.strategy_name, round(confidence, 3),
                 probs.get("BUY", 0), probs.get("SELL", 0),
@@ -488,7 +489,7 @@ class MonitorEngine:
                 cv = metrics["cv_accuracy_mean"] * 100
                 logger.info(f"Retrained {inst.SYMBOL_DISPLAY}: test={acc:.1f}% cv={cv:.1f}%")
 
-            now = datetime.utcnow().strftime("%H:%M")
+            now = datetime.now(timezone.utc).strftime("%H:%M")
             self.last_retrain_status = f"OK ({now})"
             self._last_retrain_time = time.time()
 
@@ -517,6 +518,29 @@ class MonitorEngine:
             return sys.stdin is not None and sys.stdin.isatty()
         except (AttributeError, ValueError, OSError):
             return False
+
+    def _restore_positions(self, mon: InstrumentMonitor):
+        """Restart safety: signals left without an outcome by a previous run
+        are replayed against the completed TRAIN_INTERVAL candles with the v3
+        rules; the newest unresolved one becomes the open position again."""
+        if self.signal_store is None:
+            return
+        inst = mon.instrument
+        try:
+            df = mon.get_ai_candles()
+            info = self.position_tracker.restore_from_store(
+                mon.display_name, df,
+                cost_pct_fn=lambda price, inst=inst:
+                    COSTS.round_trip_cost_pct(inst, price) * 100,
+                interval_hours=parse_interval_hours(inst.TRAIN_INTERVAL),
+                eod_close=not inst.SESSION_24_7,
+            )
+            if info["resolved"] or info["open"]:
+                logger.info(f"{mon.display_name}: restored state - "
+                            f"{info['resolved']} outcome(s) replayed, "
+                            f"open position: {info['open']}")
+        except Exception as e:
+            logger.error(f"{mon.display_name}: restore failed: {e}", exc_info=True)
 
     def _keyboard_listener(self):
         if sys.platform == "win32":
@@ -591,6 +615,7 @@ class MonitorEngine:
             mon.prev_close = live["prev_close"]
             mon.change = live["change"]
             mon.change_pct = live["change_pct"]
+            self._restore_positions(mon)
 
         while self.is_running:
             try:

@@ -33,6 +33,7 @@ from ai.feature_engineer import FeatureEngineer
 from ai.model import GoldPredictor
 from config.settings import InstrumentConfig, COSTS, AI, STRATEGY
 from data.indicators import Indicators
+from engine.execution_rules import v3_exit
 
 
 @dataclass
@@ -289,22 +290,7 @@ class Backtester:
             #    exactly at the TP level (never better).
             if state.position is not None:
                 direction, entry, sl, tp, entry_i = state.position
-                exit_price = None
-                reason = ""
-                if direction == "BUY":
-                    if o <= sl:
-                        exit_price, reason = o, "GAP_SL"
-                    elif l <= sl:
-                        exit_price, reason = sl, "SL"
-                    elif h >= tp:
-                        exit_price, reason = tp, "TP"
-                else:  # SELL
-                    if o >= sl:
-                        exit_price, reason = o, "GAP_SL"
-                    elif h >= sl:
-                        exit_price, reason = sl, "SL"
-                    elif l <= tp:
-                        exit_price, reason = tp, "TP"
+                exit_price, reason = v3_exit(direction, sl, tp, o, h, l)
 
                 if exit_price is not None:
                     self._close_position(state, exit_price, idx, reason,
