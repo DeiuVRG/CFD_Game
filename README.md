@@ -13,6 +13,7 @@
 | Instrumente | **Toate `ENABLED=False`.** Gold și BTC au picat poarta OOS v3 (cifrele exacte: [RESULTS.md](RESULTS.md)). EUR/USD și GBP/USD erau deja dezactivate. |
 | `execution_capital/` | Bot Capital.com **în carantină** — inactiv până la Poarta 2, cu bug-urile de risc reparate dormant. **Nu rula pe live.** |
 | `trading_game/` | Joc competitiv de descoperire a ponderilor optime de indicatori (spec: `docs/trading_game_prompt.md`), cu validare statistică pe test set. |
+| `sentinel/` | **Santinelă pe cont DEMO** (v3.2): Claude Fable 5.1 aprobă/respinge semnalele deterministe ale instrumentelor `DEMO_ENABLED` (Gold, BTC) și gestionează pozițiile, sub limite hard din cod; fiecare decizie logată. `CAPITAL_MODE=live` refuzat. Detalii: `sentinel/README.md`. |
 | `common/` | Modulul unic de indicatori tehnici, folosit de ambele aplicații. |
 
 ## Porțile (gates)
@@ -136,7 +137,9 @@ CFD_Game/
 - **Zero execuție live.** Modul live al botului rămâne blocat de proces.
 - **Zero secrete în repo.** `.env` e gitignored; nicio valoare personală
   hardcodată (mention-ul Discord vine din `DISCORD_MENTION`).
-- **Zero LLM în bucla de decizie.** Semnalele = XGBoost + reguli
-  deterministe.
+- **Zero LLM în bucla de decizie a semnalelor.** Semnalele = XGBoost +
+  reguli deterministe. Excepție decisă explicit (2026-09-02): santinela din
+  `sentinel/` supervizează semnalele **pe demo** (aprobă/respinge/gestionează,
+  nu inventează trade-uri), cu limite hard în cod și decizii logate.
 - **ENABLED doar prin poarta OOS.** Restul rămâne dezactivat, cu cifrele în
   comentariu.

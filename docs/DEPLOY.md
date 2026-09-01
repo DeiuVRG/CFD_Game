@@ -129,6 +129,42 @@ porni thread-ul doar dacă `sys.stdin.isatty()`, sau ieși din buclă la
 degeaba — pe un Pi e inacceptabil. Dashboard-ul de terminal fără TTY e
 inofensiv (ignoră afișajul din journal).
 
+### 4b. Santinela (demo) ca al doilea serviciu
+
+Rulează în paralel cu monitorul (citește doar `signals.db`). Cere în `.env`
+cheia Anthropic și credențialele Capital.com **demo** (vezi
+`gold_monitor/.env.example`, secțiunea Sentinel) și
+`pip install -r sentinel/requirements.txt` în același venv.
+
+```bash
+sudo tee /etc/systemd/system/cfd-sentinel.service > /dev/null << 'UNIT'
+[Unit]
+Description=CFD_Game Sentinel (DEMO account supervisor)
+After=network-online.target cfd-monitor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cfd
+WorkingDirectory=/opt/cfd/CFD_Game
+ExecStart=/opt/cfd/venv/bin/python -m sentinel.main --run
+Restart=always
+RestartSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload && sudo systemctl enable --now cfd-sentinel
+sudo journalctl -u cfd-sentinel -f
+```
+
+Verifică întâi epic-urile pe demo: `python -m sentinel.main --markets gold`
+și `--markets bitcoin`; pune valorile în `SENTINEL_EPIC_GOLD` /
+`SENTINEL_EPIC_BTC`. Prima săptămână rulează cu `--dry-run` (sau
+`SENTINEL_DRY_RUN=true`) ca să vezi deciziile fără ordine. Backup:
+`sentinel/data/decisions.db` merge în același cron ca `signals.db`.
+
 ### 5. Reantrenare săptămânală (cron)
 
 ```bash
@@ -150,6 +186,7 @@ siguranță pentru perioadele în care serviciul e oprit.)
 | Baza de semnale | `/opt/cfd/CFD_Game/gold_monitor/data/signals.db` |
 | CSV semnale (legacy) | `/opt/cfd/CFD_Game/gold_monitor/output/signals.csv` |
 | Modele | `/opt/cfd/CFD_Game/gold_monitor/models/*.pkl` |
+| Deciziile santinelei | `/opt/cfd/CFD_Game/sentinel/data/decisions.db` + `sentinel/logs/sentinel.log` |
 
 ### 7. Update
 
