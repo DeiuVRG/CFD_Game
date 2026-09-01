@@ -511,6 +511,13 @@ class MonitorEngine:
         thread = threading.Thread(target=self._retrain_background, daemon=True)
         thread.start()
 
+    @staticmethod
+    def _stdin_is_interactive() -> bool:
+        try:
+            return sys.stdin is not None and sys.stdin.isatty()
+        except (AttributeError, ValueError, OSError):
+            return False
+
     def _keyboard_listener(self):
         if sys.platform == "win32":
             import msvcrt
@@ -527,6 +534,12 @@ class MonitorEngine:
             while self.is_running:
                 if select.select([sys.stdin], [], [], 0.1)[0]:
                     key = sys.stdin.read(1)
+                    if key == '':
+                        # EOF (stdin is /dev/null under systemd, a closed
+                        # pipe, ...): without this break select() reports
+                        # "readable" forever and the loop spins at 100% CPU.
+                        logger.info("stdin closed - keyboard listener stopped")
+                        return
                     if key == '\x17':
                         self._pending_command = "ctrl_w"
                     elif key == '\x0c':
@@ -564,8 +577,13 @@ class MonitorEngine:
         self._start_time = time.time()
         logger.info(f"Trading Monitor v2 starting with {len(self.monitors)} instruments...")
 
-        kb_thread = threading.Thread(target=self._keyboard_listener, daemon=True)
-        kb_thread.start()
+        # Keyboard shortcuts only make sense on an interactive terminal. Under
+        # systemd/cron/nohup stdin is /dev/null and the listener must not run.
+        if self._stdin_is_interactive():
+            kb_thread = threading.Thread(target=self._keyboard_listener, daemon=True)
+            kb_thread.start()
+        else:
+            logger.info("Non-interactive stdin - keyboard shortcuts disabled")
 
         for mon in self.monitors:
             live = mon.fetcher.get_live_price()
