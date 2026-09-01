@@ -124,17 +124,27 @@ def cmd_monitor():
     from engine.monitor_engine import MonitorEngine
     from config.settings import INSTRUMENTS
 
-    enabled = [i for i in INSTRUMENTS if i.ENABLED]
+    enabled = [i for i in INSTRUMENTS if i.active]
     if not enabled:
-        print("\n  No ENABLED instruments - nothing to monitor.")
+        print("\n  No ENABLED or DEMO_ENABLED instruments - nothing to monitor.")
         print("  Every instrument is currently disabled by the OOS activation")
         print("  gate (see RESULTS.md). An instrument gets ENABLED=True only")
-        print("  after passing the Faza 4 criteria on out-of-sample data.")
+        print("  after passing the Faza 4 criteria on out-of-sample data;")
+        print("  DEMO_ENABLED=True routes its signals to the demo sentinel.")
         return
 
     print(f"\n  Starting Trading Monitor v2...")
-    print(f"  Instruments: {', '.join(i.SYMBOL_DISPLAY for i in enabled)}")
-    print(f"  Features: Walk-forward AI, Trailing SL, Session filter, Regime detection")
+    print("  Instruments: " + ", ".join(
+        f"{i.SYMBOL_DISPLAY} [{i.tier}]" for i in enabled))
+    if not any(i.ENABLED for i in enabled):
+        print("  NOTE: demo-tier only - no instrument has passed the real-money gate.")
+    from config.settings import MONITOR
+    if MONITOR.SIGNAL_MODE == "ai_only":
+        print("  Mode: ai_only - live path mirrors the validated v3 backtest "
+              "(completed 1h candles, ADX gate, candle-rule outcomes)")
+    else:
+        print("  Mode: vote (legacy, not validated) - AI + scalping + momentum, "
+              "trailing SL, session filter, EOD close")
     print(f"  Press Ctrl+C to stop\n")
 
     engine = MonitorEngine()

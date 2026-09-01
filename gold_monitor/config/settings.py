@@ -58,7 +58,13 @@ class InstrumentConfig:
     # Session handling: gold/FX use the global session window; 24/7 markets
     # (crypto) set SESSION_24_7=True and skip the EOD forced close.
     SESSION_24_7: bool = False
+    # ENABLED = the REAL-MONEY gate: True only after the Faza 4 OOS criteria
+    # pass (see RESULTS.md). Never set by hand.
     ENABLED: bool = True
+    # DEMO_ENABLED = the instrument emits signals for the DEMO-account
+    # sentinel (sentinel/), independently of the real-money gate. Signals
+    # carry tier="demo" in signals.db so the evidence stays separable.
+    DEMO_ENABLED: bool = False
     # --- Per-instrument strategy overrides (None -> global defaults) ---
     SL_ATR: Optional[float] = None          # Stop-loss distance in ATR multiples
     TP_ATR: Optional[float] = None          # Take-profit distance in ATR multiples
@@ -84,6 +90,15 @@ class InstrumentConfig:
 
     def threshold_grid(self) -> list:
         return self.THRESHOLD_GRID or [self.PRICE_CHANGE_THRESHOLD]
+
+    @property
+    def active(self) -> bool:
+        """Monitored by --monitor (real-money gate passed OR demo tier)."""
+        return self.ENABLED or self.DEMO_ENABLED
+
+    @property
+    def tier(self) -> str:
+        return "gate" if self.ENABLED else "demo"
 
     def candles_per_year(self, interval: str = None) -> float:
         """Number of TRAIN_INTERVAL candles in a year, used to annualize
@@ -118,6 +133,9 @@ INSTRUMENTS = [
         # Evaluated combo: thr=0.005, SL=2.5xATR, TP=4.0xATR, conf=0.50,
         # ADX>=15, RR>=1.0. Full numbers: RESULTS.md.
         ENABLED=False,
+        # Demo-tier execution by the sentinel (user decision 2026-09-02):
+        # signals flow to the Capital.com DEMO account only.
+        DEMO_ENABLED=True,
     ),
     InstrumentConfig(
         SYMBOL="EURUSD=X",
@@ -170,6 +188,7 @@ INSTRUMENTS = [
         # Evaluated combo: thr=0.015, SL=2.5xATR, TP=4.0xATR, conf=0.45,
         # ADX>=25. Full numbers: RESULTS.md.
         ENABLED=False,
+        DEMO_ENABLED=True,   # demo-tier only (sentinel), see Gold above
     ),
 ]
 
