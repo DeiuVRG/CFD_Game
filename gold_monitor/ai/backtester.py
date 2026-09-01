@@ -65,23 +65,30 @@ class ExecutionState:
 class BacktestMetrics:
     """Risk-adjusted performance metrics."""
 
-    @staticmethod
-    def sharpe_ratio(returns: np.ndarray, risk_free_rate: float = 0.02) -> float:
-        if len(returns) == 0 or np.std(returns) == 0:
-            return 0.0
-        excess = returns - (risk_free_rate / 252)
-        return float(np.mean(excess) / np.std(returns) * np.sqrt(252))
+    # All ratios are annualized with `periods_per_year` = number of candles
+    # in a year for the instrument's timeframe (InstrumentConfig.
+    # candles_per_year()). The old hardcoded 252 assumed daily candles.
+    DEFAULT_PERIODS_PER_YEAR = 252
 
     @staticmethod
-    def sortino_ratio(returns: np.ndarray, risk_free_rate: float = 0.02) -> float:
-        excess = returns - (risk_free_rate / 252)
+    def sharpe_ratio(returns: np.ndarray, risk_free_rate: float = 0.02,
+                     periods_per_year: float = DEFAULT_PERIODS_PER_YEAR) -> float:
+        if len(returns) == 0 or np.std(returns) == 0:
+            return 0.0
+        excess = returns - (risk_free_rate / periods_per_year)
+        return float(np.mean(excess) / np.std(returns) * np.sqrt(periods_per_year))
+
+    @staticmethod
+    def sortino_ratio(returns: np.ndarray, risk_free_rate: float = 0.02,
+                      periods_per_year: float = DEFAULT_PERIODS_PER_YEAR) -> float:
+        excess = returns - (risk_free_rate / periods_per_year)
         downside = returns[returns < 0]
         if len(downside) == 0:
             return float('inf')
         downside_std = np.std(downside)
         if downside_std == 0:
             return 0.0
-        return float(np.mean(excess) / downside_std * np.sqrt(252))
+        return float(np.mean(excess) / downside_std * np.sqrt(periods_per_year))
 
     @staticmethod
     def max_drawdown(equity_curve: np.ndarray) -> float:
@@ -92,8 +99,9 @@ class BacktestMetrics:
         return float(np.min(drawdown))
 
     @staticmethod
-    def calmar_ratio(returns: np.ndarray, equity_curve: np.ndarray) -> float:
-        annual_return = float(np.mean(returns) * 252)
+    def calmar_ratio(returns: np.ndarray, equity_curve: np.ndarray,
+                     periods_per_year: float = DEFAULT_PERIODS_PER_YEAR) -> float:
+        annual_return = float(np.mean(returns) * periods_per_year)
         max_dd = abs(BacktestMetrics.max_drawdown(equity_curve))
         if max_dd == 0:
             return float('inf')
@@ -115,7 +123,10 @@ class BacktestMetrics:
         return wins / len(trades)
 
     @staticmethod
-    def compute_all(trades: list, equity_curve: np.ndarray) -> dict:
+    def compute_all(trades: list, equity_curve: np.ndarray,
+                    periods_per_year: float = DEFAULT_PERIODS_PER_YEAR) -> dict:
+        """`periods_per_year` must be the number of candles per year of the
+        equity curve's timeframe (one point per candle)."""
         if not trades or len(equity_curve) < 2:
             return {
                 "total_trades": 0, "win_rate": 0, "profit_factor": 0,
@@ -130,9 +141,11 @@ class BacktestMetrics:
         net_pnls = [t.pnl_net_pct for t in trades]
         trade_returns = np.array([t.pnl_net_pct / 100 for t in trades])
 
-        # Trade-based Sharpe (more meaningful for infrequent trading)
+        # Trade-based Sharpe (more meaningful for infrequent trading):
+        # trades per year = trades / (years covered by the equity curve)
         if len(trade_returns) > 1 and np.std(trade_returns) > 0:
-            trades_per_year = len(trade_returns) * 252 / max(len(equity_curve), 1)
+            trades_per_year = (len(trade_returns) * periods_per_year
+                               / max(len(equity_curve), 1))
             trade_sharpe = float(np.mean(trade_returns) / np.std(trade_returns)
                                  * np.sqrt(max(trades_per_year, 1)))
         else:
@@ -142,11 +155,12 @@ class BacktestMetrics:
             "total_trades": len(trades),
             "win_rate": BacktestMetrics.win_rate(trades),
             "profit_factor": BacktestMetrics.profit_factor(trades),
-            "sharpe": BacktestMetrics.sharpe_ratio(returns),
+            "sharpe": BacktestMetrics.sharpe_ratio(returns, periods_per_year=periods_per_year),
             "trade_sharpe": trade_sharpe,
-            "sortino": BacktestMetrics.sortino_ratio(returns),
+            "sortino": BacktestMetrics.sortino_ratio(returns, periods_per_year=periods_per_year),
             "max_drawdown": BacktestMetrics.max_drawdown(equity_curve),
-            "calmar": BacktestMetrics.calmar_ratio(returns, equity_curve),
+            "calmar": BacktestMetrics.calmar_ratio(returns, equity_curve, periods_per_year),
+            "periods_per_year": float(periods_per_year),
             "total_return_pct": float((equity_curve[-1] / equity_curve[0] - 1) * 100),
             "avg_trade_pnl": float(np.mean(net_pnls)),
             "avg_win": float(np.mean([p for p in net_pnls if p > 0])) if any(p > 0 for p in net_pnls) else 0,
@@ -502,12 +516,12 @@ class Backtester:
             print(f"\n  --- Optimizer period (middle 25%) [LEGACY EXECUTION] ---")
             trades_opt, equity_opt = self._simulate_trades_legacy(
                 predictor, features, df, optim_idx)
-            metrics_opt = BacktestMetrics.compute_all(trades_opt, np.array(equity_opt))
+            metrics_opt = BacktestMetrics.compute_all(trades_opt, np.array(equity_opt), self.instrument.candles_per_year())
 
             print(f"  --- Out-of-sample period (last 25%) [LEGACY EXECUTION] ---")
             trades_oos, equity_oos = self._simulate_trades_legacy(
                 predictor, features, df, oos_idx)
-            metrics_oos = BacktestMetrics.compute_all(trades_oos, np.array(equity_oos))
+            metrics_oos = BacktestMetrics.compute_all(trades_oos, np.array(equity_oos), self.instrument.candles_per_year())
         else:
             predict_fn = self._make_predict_fn(predictor, features)
 
@@ -515,13 +529,13 @@ class Backtester:
             trades_opt, curve_opt, _ = self._simulate_trades(
                 predict_fn, df, optim_idx, state=ExecutionState())
             equity_opt = np.array([100000.0] + curve_opt)
-            metrics_opt = BacktestMetrics.compute_all(trades_opt, equity_opt)
+            metrics_opt = BacktestMetrics.compute_all(trades_opt, equity_opt, self.instrument.candles_per_year())
 
             print(f"  --- Out-of-sample period (last 25%) ---")
             trades_oos, curve_oos, _ = self._simulate_trades(
                 predict_fn, df, oos_idx, state=ExecutionState())
             equity_oos = np.array([100000.0] + curve_oos)
-            metrics_oos = BacktestMetrics.compute_all(trades_oos, equity_oos)
+            metrics_oos = BacktestMetrics.compute_all(trades_oos, equity_oos, self.instrument.candles_per_year())
 
         return {
             "trades": trades_oos,           # Primary result = OOS
@@ -606,7 +620,7 @@ class Backtester:
             test_start = test_end
 
         equity_arr = np.array(equity_curve)
-        metrics = BacktestMetrics.compute_all(all_trades, equity_arr)
+        metrics = BacktestMetrics.compute_all(all_trades, equity_arr, self.instrument.candles_per_year())
 
         print(f"\n  Walk-forward complete: {n_retrains} retrains, "
               f"{len(all_trades)} trades, "

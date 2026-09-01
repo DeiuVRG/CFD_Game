@@ -1,10 +1,25 @@
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+# Hours of trading per year used to annualize candle-based metrics.
+HOURS_PER_YEAR_24_7 = 24 * 365          # crypto: 8760
+HOURS_PER_YEAR_SESSION = 23 * 5 * 52    # gold/FX futures: ~23h/day, 5 days/week
+
+
+def parse_interval_hours(interval: str) -> float:
+    """'5m' -> 1/12, '1h' -> 1, '4h' -> 4, '1d' -> 24, '1wk' -> 168."""
+    m = re.fullmatch(r"(\d+)(m|h|d|wk)", interval.strip().lower())
+    if not m:
+        raise ValueError(f"Unsupported candle interval: {interval!r}")
+    n, unit = int(m.group(1)), m.group(2)
+    return n * {"m": 1 / 60, "h": 1.0, "d": 24.0, "wk": 168.0}[unit]
 
 
 @dataclass
@@ -69,6 +84,15 @@ class InstrumentConfig:
 
     def threshold_grid(self) -> list:
         return self.THRESHOLD_GRID or [self.PRICE_CHANGE_THRESHOLD]
+
+    def candles_per_year(self, interval: str = None) -> float:
+        """Number of TRAIN_INTERVAL candles in a year, used to annualize
+        Sharpe/Sortino/Calmar and the trade-Sharpe. Before v3.1 the metrics
+        assumed 252 periods/year (daily candles) on 1h data, which shrank the
+        trade-Sharpe by ~5x on gold (see RESULTS.md)."""
+        hours = (HOURS_PER_YEAR_24_7 if self.SESSION_24_7
+                 else HOURS_PER_YEAR_SESSION)
+        return hours / parse_interval_hours(interval or self.TRAIN_INTERVAL)
 
 
 # Twelve Data API key (free tier: 800 req/day, 8/min)

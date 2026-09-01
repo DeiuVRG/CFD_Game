@@ -143,3 +143,21 @@ context): optim −19.49% / OOS −33.25% — aici și execuția veche pierdea.
 metricile, verdicte) sunt versionate în `docs/evaluations/`. Datele brute și
 modelele antrenate rămân locale (`gold_monitor/data_cache/`,
 `gold_monitor/models/` — gitignored).
+
+---
+
+## Notă v3.1 (2026-09-02) — recalibrarea trade-Sharpe
+
+Metricile de mai sus au fost produse cu anualizare la **252 perioade/an**
+(corectă pentru candele zilnice), deși evaluarea rulează pe candele **1h**
+(~5.980/an pentru aur, 8.760/an pentru BTC). Efect: Sharpe-ul pe candele și
+**trade-Sharpe-ul folosit de poartă erau subestimate de ~4,9× (aur) / ~5,9×
+(BTC)** — criteriul „trade-Sharpe > 0,5" era, în realitate, „> ~2,5".
+
+Ce **nu** se schimbă: semnul metricilor, clasamentul din optimizer (factorul
+e constant per instrument) și verdictele — ambele instrumente aveau
+trade-Sharpe negativ, deci rămân `ENABLED=False`. Ce se schimbă din v3.1:
+`BacktestMetrics` anualizează cu `InstrumentConfig.candles_per_year()`.
+Tabelele de mai sus **nu au fost re-rulate** (fereastra OOS e consumată);
+pragul rămâne declarat la 0,5 și se re-declară explicit, înainte de
+următoarea rulare OOS, dacă vrem să-l schimbăm.
