@@ -121,9 +121,9 @@ class MonitorEngine:
 
         self.monitors: list[InstrumentMonitor] = []
         for inst in INSTRUMENTS:
-            if inst.ENABLED:
+            if inst.active:
                 self.monitors.append(InstrumentMonitor(inst))
-                logger.info(f"Loaded instrument: {inst.SYMBOL_DISPLAY}")
+                logger.info(f"Loaded instrument: {inst.SYMBOL_DISPLAY} [{inst.tier}]")
 
         self._signal_log_path = "output/signals.csv"
         os.makedirs("output", exist_ok=True)
@@ -176,6 +176,7 @@ class MonitorEngine:
                 take_profit=signal.take_profit,
                 strategy=signal.strategy_name,
                 model_ver=self._model_version(mon),
+                tier=mon.instrument.tier,
             )
         except Exception as e:
             logger.error(f"Failed to persist signal: {e}")

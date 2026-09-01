@@ -108,3 +108,16 @@ def test_eod_close_skips_24_7_positions(monkeypatch):
     assert "BTC/USD (Bitcoin)" not in closed_instruments
     # BTC position is still open
     assert tracker.get_position("BTC/USD (Bitcoin)") is not None
+
+
+# ---------------------------------------------------------------- v3.2 ----
+
+def test_real_money_gate_stays_closed_and_demo_tier_is_explicit():
+    """ENABLED is the real-money gate (Faza 4 OOS criteria) and must stay
+    False for every instrument; DEMO_ENABLED is a separate, explicit flag."""
+    for inst in INSTRUMENTS:
+        assert inst.ENABLED is False, f"{inst.SYMBOL} must not pass the gate by hand"
+    assert GOLD.DEMO_ENABLED is True and GOLD.active and GOLD.tier == "demo"
+    assert BTC.DEMO_ENABLED is True and BTC.tier == "demo"
+    assert get_instrument("EURUSD=X").active is False
+    assert get_instrument("GBPUSD=X").active is False

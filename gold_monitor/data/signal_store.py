@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS signals (
     take_profit   REAL,
     strategy      TEXT,
     model_version TEXT,
+    tier          TEXT,   -- 'gate' (real-money gate passed) | 'demo' (sentinel)
     -- hypothetical outcome, filled once by the position tracker
     outcome       TEXT,
     outcome_ts_utc TEXT,
@@ -53,7 +54,14 @@ _EXPORT_COLUMNS = [
     "id", "ts_utc", "instrument", "direction", "confidence",
     "prob_buy", "prob_sell", "prob_hold", "adx", "regime",
     "entry_price", "stop_loss", "take_profit", "strategy", "model_version",
+    "tier",
     "outcome", "outcome_ts_utc", "exit_price", "pnl_gross_pct", "pnl_net_pct",
+]
+
+# Columns added after the first schema; applied with ALTER TABLE on open so
+# an existing signals.db keeps working (append-only: never dropped/renamed).
+_MIGRATIONS = [
+    ("tier", "ALTER TABLE signals ADD COLUMN tier TEXT"),
 ]
 
 
@@ -83,6 +91,11 @@ class SignalStore:
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(_SCHEMA)
+            existing = {row[1] for row in
+                        self._conn.execute("PRAGMA table_info(signals)")}
+            for column, ddl in _MIGRATIONS:
+                if column not in existing:
+                    self._conn.execute(ddl)
             self._conn.commit()
 
     def close(self):
@@ -107,6 +120,7 @@ class SignalStore:
         strategy: str = None,
         model_ver: str = None,
         ts_utc: str = None,
+        tier: str = None,
     ) -> int:
         """Append a new signal row; returns its id."""
         probabilities = probabilities or {}
@@ -115,13 +129,15 @@ class SignalStore:
                 """INSERT INTO signals
                    (ts_utc, instrument, direction, confidence,
                     prob_buy, prob_sell, prob_hold, adx, regime,
-                    entry_price, stop_loss, take_profit, strategy, model_version)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    entry_price, stop_loss, take_profit, strategy, model_version,
+                    tier)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     ts_utc or _utcnow(), instrument, direction, confidence,
                     probabilities.get("BUY"), probabilities.get("SELL"),
                     probabilities.get("HOLD"), adx, regime,
                     entry_price, stop_loss, take_profit, strategy, model_ver,
+                    tier,
                 ),
             )
             self._conn.commit()
@@ -169,6 +185,19 @@ class SignalStore:
         if instrument:
             query += " WHERE instrument = ?"
             params = (instrument,)
+        query += " ORDER BY id ASC"
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def fetch_since(self, last_id: int, instrument: str = None) -> list:
+        """Signals with id > last_id (oldest first) - the consumer cursor
+        used by the sentinel to pick up new signals."""
+        query = "SELECT * FROM signals WHERE id > ?"
+        params: tuple = (int(last_id),)
+        if instrument:
+            query += " AND instrument = ?"
+            params += (instrument,)
         query += " ORDER BY id ASC"
         with self._lock:
             rows = self._conn.execute(query, params).fetchall()

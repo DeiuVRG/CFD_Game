@@ -123,3 +123,53 @@ def test_model_version_real_file(tmp_path):
     # Different content -> different version
     p.write_bytes(b"other model bytes")
     assert model_version(str(p)) != v1
+
+
+# ---------------------------------------------------------------- v3.2 ----
+
+def test_tier_is_persisted_and_exported(store, tmp_path):
+    sid = store.insert_signal("XAU/USD (Gold)", "BUY", entry_price=1.0,
+                              stop_loss=0.9, take_profit=1.2, tier="demo")
+    row = store.fetch_all()[0]
+    assert row["id"] == sid and row["tier"] == "demo"
+    path = tmp_path / "x.csv"
+    store.export_csv(str(path))
+    assert "tier" in path.read_text().splitlines()[0]
+
+
+def test_fetch_since_is_a_cursor(store):
+    a = insert_sample(store)
+    b = insert_sample(store, direction="SELL")
+    c = insert_sample(store, instrument="BTC/USD (Bitcoin)")
+    assert [r["id"] for r in store.fetch_since(0)] == [a, b, c]
+    assert [r["id"] for r in store.fetch_since(a)] == [b, c]
+    assert [r["id"] for r in store.fetch_since(a, instrument="BTC/USD (Bitcoin)")] == [c]
+    assert store.fetch_since(c) == []
+
+
+def test_old_database_is_migrated_with_tier_column(tmp_path):
+    """A signals.db created before the tier column existed keeps working."""
+    import sqlite3
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts_utc TEXT NOT NULL,
+            instrument TEXT NOT NULL, direction TEXT NOT NULL, confidence REAL,
+            prob_buy REAL, prob_sell REAL, prob_hold REAL, adx REAL, regime TEXT,
+            entry_price REAL, stop_loss REAL, take_profit REAL, strategy TEXT,
+            model_version TEXT, outcome TEXT, outcome_ts_utc TEXT,
+            exit_price REAL, pnl_gross_pct REAL, pnl_net_pct REAL);
+        INSERT INTO signals (ts_utc, instrument, direction)
+            VALUES ('2026-01-01T00:00:00Z', 'XAU/USD (Gold)', 'BUY');
+    """)
+    conn.commit(); conn.close()
+
+    s = SignalStore(db_path=str(path))
+    try:
+        rows = s.fetch_all()
+        assert rows[0]["tier"] is None            # legacy row, column added
+        sid = s.insert_signal("XAU/USD (Gold)", "SELL", tier="demo")
+        assert s.fetch_all()[-1]["tier"] == "demo" and sid == 2
+    finally:
+        s.close()

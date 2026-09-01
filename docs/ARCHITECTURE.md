@@ -11,6 +11,7 @@
 | `gold_monitor/` | Monitor de semnale (XGBoost 1h + 2 strategii clasice 5m → vot → Discord + SQLite). **Nu execută tranzacții.** | Activă, dar toate instrumentele `ENABLED=False` |
 | `execution_capital/` | Bot de execuție Capital.com | **Carantină** până la Poarta 2 |
 | `trading_game/` | Simulare competitivă pentru descoperirea ponderilor de indicatori | Studiu încheiat (lecție în `trading_game/results/REPORT.md`) |
+| `sentinel/` | Santinelă pe cont **DEMO**: Claude Fable 5.1 aprobă/respinge semnalele deterministe și gestionează pozițiile, în limite hard din cod (v3.2) | Activă pe demo (Gold + BTC, `DEMO_ENABLED`) |
 | `common/indicators.py` | **Unica** implementare de indicatori (RSI, EMA, MACD, BB, ATR, ADX), reexportată de `gold_monitor/data/indicators.py` | Partajată |
 
 ### Traseul porților
@@ -184,6 +185,35 @@ mai înseamnă nimic. De aceea fereastra din RESULTS.md e „consumată".
 
 ---
 
+## 4b. Nivelul demo: `DEMO_ENABLED` și santinela (`sentinel/`)
+
+Decizie a proprietarului (2026-09-02), abatere explicită de la „zero LLM în
+bucla de decizie”, limitată la contul **demo**:
+
+- `InstrumentConfig.DEMO_ENABLED` (`gold_monitor/config/settings.py`) e un
+  flag separat de `ENABLED` (care rămâne poarta pentru bani reali, toate
+  `False`). Gold și BTC au `DEMO_ENABLED=True`: monitorul le rulează în
+  modul `ai_only` și fiecare semnal poartă `tier="demo"` în `signals.db`.
+- `sentinel/` citește `signals.db` (cursor `fetch_since`), cere lui Claude
+  Fable 5.1 o cercetare de piață (web search, cache 1h) și o decizie
+  **APPROVE/VETO + size_fraction** în JSON strict, apoi aplică regulile hard
+  din `sentinel/rules.py` (1% risc, 3% pierdere zilnică, 5 trade-uri/zi, 2
+  poziții, o poziție per instrument, R:R ≥ 1, semnal ≤ 15 min). Execută pe
+  Capital.com **demo** prin clientul din `execution_capital/broker/`
+  (`sentinel/broker.py` refuză `CAPITAL_MODE=live`). La 15 min revizuiește
+  pozițiile: **HOLD / CLOSE / TIGHTEN_SL** — stop-ul se mută doar în
+  favoarea poziției. Orice eșec al modelului = *fail closed*.
+- Fiecare decizie e logată în `sentinel/data/decisions.db` (răspunsul
+  modelului, motivarea, riscurile, regula care a blocat, tokens, deal_id,
+  outcome/P&L). Semnalele respinse au totuși outcome ipotetic în
+  `signals.db`, deci valoarea veto-ului e măsurabilă; `--no-llm` rulează
+  calea deterministă ca grup de control.
+- Procesele nu se importă reciproc (`gold_monitor` și `execution_capital`
+  au pachete cu aceleași nume): santinela e un proces separat care
+  comunică doar prin SQLite. Detalii: `sentinel/README.md`.
+
+---
+
 ## 5. `execution_capital/` — reparat, dar dormant
 
 Bot de execuție Capital.com, **în carantină** (nu se pornește, nu se
@@ -297,4 +327,7 @@ RESULTS.md: clasamentul in-sample nu garantează nimic out-of-sample;
 - `ENABLED=True` doar prin poartă.
 - Zero secrete în repo (`.env`, `models/*.pkl`, `*.db`, `data_cache/`,
   `logs/`, `output/` sunt gitignored).
-- Zero LLM în bucla de decizie a semnalelor.
+- Zero LLM în bucla de decizie a **semnalelor** (XGBoost + reguli
+  deterministe). Excepția decisă explicit: santinela pe **demo** (§4b), unde
+  modelul doar aprobă/respinge/gestionează semnale deja emise, sub limite
+  hard din cod, cu fiecare decizie logată.
