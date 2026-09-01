@@ -26,6 +26,9 @@ class AIStrategy(BaseStrategy):
         self.instrument = instrument
         self.predictor = GoldPredictor(model_path=model_path)
         self._loaded = self.predictor.load()
+        # Last prediction (for Discord / signals.db), set by analyze()
+        self.last_confidence: float = 0.0
+        self.last_probs: dict = {}
         if not self._loaded:
             logger.warning(f"AI model not loaded from {model_path or 'default'}. Run --train first.")
 
@@ -57,6 +60,8 @@ class AIStrategy(BaseStrategy):
 
         # Predict
         signal_val, confidence, probs = self.predictor.predict(features)
+        self.last_confidence = float(confidence)
+        self.last_probs = dict(probs) if probs else {}
 
         if confidence < self._confidence_threshold():
             return None

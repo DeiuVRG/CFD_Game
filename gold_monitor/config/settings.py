@@ -176,6 +176,18 @@ INSTRUMENTS = [
 
 @dataclass
 class MonitorConfig:
+    # How live signals are produced:
+    #   "ai_only" (default) - mirrors the validated v3 backtest exactly: the
+    #       XGBoost prediction on completed TRAIN_INTERVAL candles, 1h ADX
+    #       gate, cost + min R:R filter, one position at a time, outcomes by
+    #       the v3 candle rules. No session filter, no EOD close, no trailing
+    #       SL, no vote - none of these exist in the backtested model, so the
+    #       evidence collected in signals.db is about the strategy that was
+    #       actually validated.
+    #   "vote" - legacy: AI + scalping + momentum weighted vote on 5m/1h,
+    #       tick-based SL/TP with trailing, session filter and EOD close.
+    #       NOT validated by the backtester; kept for experimentation.
+    SIGNAL_MODE: str = "ai_only"
     FETCH_INTERVAL_SEC: int = 10  # 10 sec (TradingView is free)
     ANALYSIS_INTERVAL_SEC: int = 60
     CANDLE_LOOKBACK: int = 100
