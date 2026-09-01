@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -51,7 +51,7 @@ class DiscordNotifier:
         action = "CUMPARA" if is_buy else "VINDE"
 
         rr = signal.risk_reward_ratio
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         # 5-decimal format only for sub-10 prices (FX pairs); gold/BTC
         # and other large prices use thousands formatting.
@@ -88,10 +88,16 @@ class DiscordNotifier:
             logger.info(f"Discord: {signal.direction} signal sent for {signal.epic}")
         return success
 
+    def reset_last_direction(self, instrument_key: str):
+        """Forget the last notified direction for an instrument so that the
+        next signal in the same direction (after a closed position) is sent."""
+        self._last_signal_direction.pop(instrument_key, None)
+
     def send_close_signal(self, position: TrackedPosition) -> bool:
         reason_map = {
             "TP_HIT": ("\U0001f3af TARGET ATINS!", 0x00FF00, "Profit realizat!"),
             "SL_HIT": ("\U0001f6d1 STOP LOSS ATINS!", 0xFF0000, "Pierdere limitata."),
+            "GAP_SL_HIT": ("\U0001f6d1 STOP LOSS ATINS (GAP)!", 0xFF0000, "Deschidere prin SL - iesire la open."),
             "TRAILING_SL_HIT": ("\U0001f4c8 TRAILING SL ATINS!", 0xFFAA00, "Profit protejat prin trailing stop!"),
             "SIGNAL_REVERSED": ("\U0001f504 SEMNAL INVERSAT!", 0xFFAA00, "Semnalul s-a schimbat."),
             "EOD_CLOSE": ("\U0001f319 INCHIDERE END-OF-DAY!", 0x888888, "Pozitia nu ramane peste noapte."),
@@ -128,7 +134,7 @@ class DiscordNotifier:
             {"name": "\U0001f4ca Strategie", "value": position.strategy_name, "inline": True},
         ]
 
-        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         embed = {
             "title": f"{title} - {position.instrument}",
             "description": desc,
@@ -166,6 +172,6 @@ class DiscordNotifier:
                 {"name": "Status", "value": "Conectat", "inline": True},
                 {"name": "Versiune", "value": "v2.0", "inline": True},
             ],
-            "footer": {"text": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")},
+            "footer": {"text": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")},
         }
         return self._post({"username": DISCORD.BOT_NAME, "content": DISCORD.MENTION_TAG, "embeds": [embed]})

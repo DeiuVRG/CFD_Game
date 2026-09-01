@@ -1,10 +1,25 @@
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+# Hours of trading per year used to annualize candle-based metrics.
+HOURS_PER_YEAR_24_7 = 24 * 365          # crypto: 8760
+HOURS_PER_YEAR_SESSION = 23 * 5 * 52    # gold/FX futures: ~23h/day, 5 days/week
+
+
+def parse_interval_hours(interval: str) -> float:
+    """'5m' -> 1/12, '1h' -> 1, '4h' -> 4, '1d' -> 24, '1wk' -> 168."""
+    m = re.fullmatch(r"(\d+)(m|h|d|wk)", interval.strip().lower())
+    if not m:
+        raise ValueError(f"Unsupported candle interval: {interval!r}")
+    n, unit = int(m.group(1)), m.group(2)
+    return n * {"m": 1 / 60, "h": 1.0, "d": 24.0, "wk": 168.0}[unit]
 
 
 @dataclass
@@ -69,6 +84,15 @@ class InstrumentConfig:
 
     def threshold_grid(self) -> list:
         return self.THRESHOLD_GRID or [self.PRICE_CHANGE_THRESHOLD]
+
+    def candles_per_year(self, interval: str = None) -> float:
+        """Number of TRAIN_INTERVAL candles in a year, used to annualize
+        Sharpe/Sortino/Calmar and the trade-Sharpe. Before v3.1 the metrics
+        assumed 252 periods/year (daily candles) on 1h data, which shrank the
+        trade-Sharpe by ~5x on gold (see RESULTS.md)."""
+        hours = (HOURS_PER_YEAR_24_7 if self.SESSION_24_7
+                 else HOURS_PER_YEAR_SESSION)
+        return hours / parse_interval_hours(interval or self.TRAIN_INTERVAL)
 
 
 # Twelve Data API key (free tier: 800 req/day, 8/min)
@@ -152,6 +176,18 @@ INSTRUMENTS = [
 
 @dataclass
 class MonitorConfig:
+    # How live signals are produced:
+    #   "ai_only" (default) - mirrors the validated v3 backtest exactly: the
+    #       XGBoost prediction on completed TRAIN_INTERVAL candles, 1h ADX
+    #       gate, cost + min R:R filter, one position at a time, outcomes by
+    #       the v3 candle rules. No session filter, no EOD close, no trailing
+    #       SL, no vote - none of these exist in the backtested model, so the
+    #       evidence collected in signals.db is about the strategy that was
+    #       actually validated.
+    #   "vote" - legacy: AI + scalping + momentum weighted vote on 5m/1h,
+    #       tick-based SL/TP with trailing, session filter and EOD close.
+    #       NOT validated by the backtester; kept for experimentation.
+    SIGNAL_MODE: str = "ai_only"
     FETCH_INTERVAL_SEC: int = 10  # 10 sec (TradingView is free)
     ANALYSIS_INTERVAL_SEC: int = 60
     CANDLE_LOOKBACK: int = 100

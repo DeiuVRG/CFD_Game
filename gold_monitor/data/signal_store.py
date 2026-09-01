@@ -174,6 +174,19 @@ class SignalStore:
             rows = self._conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
+    def fetch_open(self, instrument: str = None) -> list:
+        """Signals whose hypothetical outcome is still unresolved (oldest
+        first). Used at startup to rebuild/replay positions after a restart."""
+        query = "SELECT * FROM signals WHERE outcome IS NULL"
+        params = ()
+        if instrument:
+            query += " AND instrument = ?"
+            params = (instrument,)
+        query += " ORDER BY id ASC"
+        with self._lock:
+            rows = self._conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
+
     def export_csv(self, path: str) -> int:
         """Dump every signal (with outcomes) to CSV for external audit.
         Returns the number of exported rows."""

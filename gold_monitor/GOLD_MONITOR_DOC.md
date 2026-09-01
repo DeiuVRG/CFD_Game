@@ -58,40 +58,43 @@ gold_monitor/
 
 ## Cum functioneaza monitorizarea (--monitor)
 
-### La fiecare 5 secunde:
-- Ia pretul LIVE al aurului de pe Yahoo Finance (GC=F)
+Din v3.1 monitorul are doua moduri (`MonitorConfig.SIGNAL_MODE` in
+`config/settings.py`). **Implicit este `ai_only`**: calea live reproduce
+exact modelul validat de backtester, ca dovezile din `signals.db` sa fie
+despre strategia care a fost efectiv testata.
+
+### La fiecare 10 secunde:
+- Ia pretul LIVE (TradingView → TwelveData → Yahoo)
 - Afiseaza dashboard-ul in terminal
 
-### La fiecare 60 secunde (analiza):
-1. Descarca ultimele candle-uri de 5 minute (display + strategii clasice)
-2. Separat, pastreaza un cache de candele de 1h (30 zile) pentru calea AI
-3. Calculeaza indicatorii tehnici (RSI, MACD, BB, ATR, EMA, ADX)
-4. Ruleaza **3 strategii in paralel**:
+### La fiecare 60 secunde (`ai_only`):
+1. Descarca candele de 5 minute doar pentru indicatorii din dashboard
+2. Ia candelele de 1h (TRAIN_INTERVAL) si **arunca candela in formare** -
+   modelul a fost antrenat si validat pe candele complete
+3. Daca a aparut o candela 1h **noua**:
+   - **Outcome**: pozitia ipotetica deschisa e verificata pe candela noua
+     cu regulile v3 (`engine/execution_rules.py`): fitilurile conteaza,
+     SL are prioritate daca SL+TP sunt atinse in aceeasi candela, gap prin
+     SL = iesire la open. La inchidere: Discord + outcome in `signals.db`
+   - Daca nu e pozitie deschisa: gate ADX(1h) ≥ `adx_min`, predictie
+     XGBoost pe candelele complete, filtru cost + R:R minim identic cu
+     `Backtester._simulate_trades`
+   - Semnal: intrare = pretul live din momentul semnalului (≈ open-ul
+     candelei urmatoare, ca in backtest), SL/TP la distantele ATR din
+     candela de semnal → Discord + `output/signals.csv` + `data/signals.db`
+     (cu versiunea modelului)
+4. **Nu exista** in acest mod: filtru de sesiune, inchidere EOD, trailing
+   SL, vot intre strategii - niciuna nu face parte din modelul validat
+5. La pornire, semnalele ramase fara outcome (dupa un crash/restart) sunt
+   **rejucate** din candele (`PositionTracker.restore_from_store`)
 
-#### a) AI (XGBoost) - 50% din votul final [v3: pe candele de 1h]
-- Ruleaza pe TRAIN_INTERVAL (1h) - acelasi timeframe pe care modelul a fost
-  antrenat si backtestat; gate-ul de regim ADX se calculeaza tot pe 1h
-- Calculeaza features din candle-urile de 1h
-- Modelul prezice BUY / SELL / HOLD
-- Doar daca confidenta trece pragul instrumentului
+### Modul `vote` (legacy, nevalidat de backtester)
+AI (50%) + Scalping RSI+BB (25%) + Momentum MACD+EMA (25%) pe candele 5m,
+ponderi ajustate pe regim, prag de vot 0.35, SL/TP verificate pe tick cu
+trailing, filtru de sesiune London+NY si inchidere fortata la 21:00 UTC.
+Pastrat pentru experimente; nu-l folosi pentru colectarea de dovezi.
 
-#### b) Scalping (RSI + Bollinger Bands) - 25% din vot
-- RSI < 30 + pret sub BB lower → BUY
-- RSI > 70 + pret peste BB upper → SELL
-
-#### c) Momentum (MACD + EMA crossover) - 25% din vot
-- EMA(9) trece peste EMA(21) + MACD pozitiv → BUY
-- EMA(9) trece sub EMA(21) + MACD negativ → SELL
-
-4. **VOTARE**: combina cele 3 strategii ponderat
-   - Daca scorul combinat > 0.50 → SEMNAL VALID
-5. Daca e semnal NOU (diferit de ultimul):
-   - Calculeaza Stop Loss + Take Profit (bazat pe ATR)
-   - Trimite pe Discord (cu ping daca DISCORD_MENTION e setat)
-   - Persista in `output/signals.csv` SI in `data/signals.db` (SQLite,
-     append-only, cu versiunea modelului); outcome-ul ipotetic (TP/SL/EOD,
-     P&L brut/net) se completeaza ulterior de position tracker
-   - Raport agregat oricand cu `python main.py --report`
+- Raport agregat oricand cu `python main.py --report`
 
 ---
 

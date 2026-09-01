@@ -11,7 +11,9 @@ import pandas as pd
 
 from ai.feature_engineer import FeatureEngineer
 from ai.model import GoldPredictor
-from config.settings import INSTRUMENTS, MONITOR, STRATEGY, AI, COSTS, InstrumentConfig
+from config.settings import (INSTRUMENTS, MONITOR, STRATEGY, AI, COSTS,
+                             InstrumentConfig, parse_interval_hours)
+from data.candles import drop_incomplete_candle
 from data.gold_fetcher import MarketFetcher, fetch_all_prices_batch
 from data.indicators import Indicators
 from data.signal_store import SignalStore, model_version
@@ -51,6 +53,8 @@ class InstrumentMonitor:
         # AI candles cache (TRAIN_INTERVAL timeframe; refreshed periodically)
         self._ai_df: Optional[pd.DataFrame] = None
         self._ai_df_time: float = 0
+        # Open time of the last COMPLETED AI candle processed (ai_only mode)
+        self.last_ai_candle_ts = None
 
         # Display values
         self.price: float = 0
@@ -73,10 +77,14 @@ class InstrumentMonitor:
         return self.ai_strategy.predictor.is_ready
 
     def get_ai_candles(self) -> pd.DataFrame:
-        """TRAIN_INTERVAL candles for the AI path (cached; a new 1h candle
-        only appears hourly, so no need to refetch every cycle)."""
+        """COMPLETED TRAIN_INTERVAL candles for the AI path (the forming
+        candle is dropped). Cached; refreshed after AI_CANDLE_REFRESH_SEC or
+        as soon as the clock crosses into a new candle interval, so a new
+        completed candle is picked up on the next analysis tick."""
         now = time.time()
-        if (self._ai_df is not None
+        interval_sec = parse_interval_hours(self.instrument.TRAIN_INTERVAL) * 3600
+        same_interval = int(now // interval_sec) == int(self._ai_df_time // interval_sec)
+        if (self._ai_df is not None and same_interval
                 and now - self._ai_df_time < MONITOR.AI_CANDLE_REFRESH_SEC):
             return self._ai_df
 
@@ -85,7 +93,7 @@ class InstrumentMonitor:
             interval=self.instrument.TRAIN_INTERVAL,
         )
         if not df.empty:
-            self._ai_df = df
+            self._ai_df = drop_incomplete_candle(df, self.instrument.TRAIN_INTERVAL)
             self._ai_df_time = now
 
         return self._ai_df if self._ai_df is not None else pd.DataFrame()
@@ -146,7 +154,7 @@ class MonitorEngine:
         with open(self._signal_log_path, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                datetime.utcnow().isoformat(), instrument, signal.direction,
+                datetime.now(timezone.utc).isoformat(), instrument, signal.direction,
                 signal.entry_price, signal.stop_loss, signal.take_profit,
                 signal.strategy_name, round(confidence, 3),
                 probs.get("BUY", 0), probs.get("SELL", 0),
@@ -343,6 +351,10 @@ class MonitorEngine:
         # Session check (per instrument: crypto is 24/7, gold keeps sessions)
         mon.session_active = self._is_session_active(mon.instrument)
 
+        if MONITOR.SIGNAL_MODE == "ai_only":
+            return self._process_ai_only(mon, result)
+
+        # ---- legacy "vote" mode below (not validated by the backtester) ----
         # Check SL/TP with trailing SL (pass ATR for trailing calculation)
         closed_pos = self.position_tracker.check_sl_tp(
             mon.display_name, mon.price, atr=mon.atr
@@ -436,6 +448,126 @@ class MonitorEngine:
 
         return result
 
+    # ------------------------------------------------------------------
+    # ai_only mode: the live path mirrors the validated v3 backtest
+    # ------------------------------------------------------------------
+
+    def _process_ai_only(self, mon: InstrumentMonitor, result: dict) -> dict:
+        now = time.time()
+        if now - mon.last_analysis_time < MONITOR.ANALYSIS_INTERVAL_SEC:
+            return result
+        mon.last_analysis_time = now
+
+        # 5m candles: dashboard indicators only (no signal role in this mode)
+        df = mon.fetcher.get_candles()
+        if not df.empty and len(df) >= 60:
+            close, high, low = df["close"], df["high"], df["low"]
+            rsi_series = Indicators.rsi(close, 14)
+            _, _, hist_series = Indicators.macd(close)
+            adx_series = Indicators.adx(high, low, close, 14)
+            atr_series = Indicators.atr(high, low, close, 14)
+            mon.rsi = float(rsi_series.iloc[-1]) if not pd.isna(rsi_series.iloc[-1]) else 50
+            mon.macd_hist = float(hist_series.iloc[-1]) if not pd.isna(hist_series.iloc[-1]) else 0
+            mon.adx = float(adx_series.iloc[-1]) if not pd.isna(adx_series.iloc[-1]) else 0
+            mon.atr = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else 0
+
+        df_ai = mon.get_ai_candles()
+        result.update(self._ai_only_step(mon, df_ai, mon.price))
+        return result
+
+    def _ai_only_step(self, mon: InstrumentMonitor, df_ai: pd.DataFrame,
+                      live_price: float) -> dict:
+        """One step of the validated model, run once per NEW completed
+        TRAIN_INTERVAL candle:
+
+          1. resolve the open hypothetical position with the v3 exit rules
+             on the completed candles after the signal candle;
+          2. when flat: XGBoost prediction on the completed candles, gated by
+             the TRAIN_INTERVAL ADX, filtered by round-trip cost and min R:R
+             exactly like Backtester._simulate_trades. The entry is the live
+             price at signal time (~ the open of the forming candle - the
+             backtest's "next open"); SL/TP keep the signal-time ATR distances
+             anchored to that entry.
+
+        Deliberately absent (not part of the validated model): session
+        filter, EOD close, trailing SL, the 3-strategy vote.
+        """
+        result = {"discord_sent": False, "close_sent": False}
+        if df_ai is None or df_ai.empty or len(df_ai) < 60:
+            return result
+        last_ts = pd.Timestamp(df_ai["timestamp"].iloc[-1])
+        if mon.last_ai_candle_ts is not None and last_ts == mon.last_ai_candle_ts:
+            return result
+        mon.last_ai_candle_ts = last_ts
+
+        name = mon.display_name
+        inst = mon.instrument
+
+        # 1) Outcome of the open position on the new completed candle(s)
+        closed = self.position_tracker.resolve_with_candles(name, df_ai)
+        if closed is not None:
+            self.discord.send_close_signal(closed)
+            self.discord.reset_last_direction(name)
+            result["close_sent"] = True
+
+        # Regime gate on the AI timeframe
+        adx_series = Indicators.adx(df_ai["high"], df_ai["low"], df_ai["close"], 14)
+        adx = adx_series.iloc[-1]
+        mon.adx_1h = float(adx) if not pd.isna(adx) else 0.0
+        if pd.isna(adx) or adx < inst.adx_min():
+            return result
+        if self.position_tracker.get_position(name) is not None:
+            return result
+
+        # 2) AI prediction on the completed candles
+        sig = mon.ai_strategy.analyze(name, df_ai)
+        mon.last_ai_confidence = getattr(mon.ai_strategy, "last_confidence", 0.0)
+        mon.last_ai_probs = getattr(mon.ai_strategy, "last_probs", {}) or {}
+        if sig is None:
+            mon.last_signal = None
+            return result
+
+        # Cost + R:R filter, relative to the signal candle close (as backtested)
+        close = float(df_ai["close"].iloc[-1])
+        sl_dist = abs(sig.entry_price - sig.stop_loss)
+        tp_dist = abs(sig.take_profit - sig.entry_price)
+        risk = sl_dist / close
+        reward = tp_dist / close
+        cost = COSTS.round_trip_cost_pct(inst, close)
+        if not (risk > 0 and reward > cost and (reward / risk) >= inst.min_rr()):
+            logger.info(f"[{name}] AI {sig.direction} filtered: reward={reward:.4f} "
+                        f"cost={cost:.4f} rr={reward / risk if risk else 0:.2f}")
+            return result
+
+        entry = live_price if live_price and live_price > 0 else close
+        if sig.direction == "BUY":
+            sl, tp = entry - sl_dist, entry + tp_dist
+        else:
+            sl, tp = entry + sl_dist, entry - tp_dist
+        signal = Signal(
+            epic=name, direction=sig.direction, entry_price=entry,
+            stop_loss=sl, take_profit=tp, strategy_name=sig.strategy_name,
+            strength=sig.strength,
+        )
+        mon.last_signal = signal
+
+        result["discord_sent"] = self.discord.send_signal(
+            signal, confidence=mon.last_ai_confidence,
+            probabilities=mon.last_ai_probs,
+        )
+        signal_id = self._log_signal(
+            mon, signal, mon.last_ai_confidence, mon.last_ai_probs,
+            mon.adx_1h, mon.rsi, True,
+        )
+        self.position_tracker.open_position(
+            instrument=name, direction=signal.direction, entry_price=entry,
+            stop_loss=sl, take_profit=tp, strategy_name=signal.strategy_name,
+            eod_close=False, signal_id=signal_id,
+            cost_pct=COSTS.round_trip_cost_pct(inst, entry) * 100,
+            signal_candle_ts=last_ts,
+        )
+        return result
+
     def _batch_update_prices(self):
         enabled_instruments = [mon.instrument for mon in self.monitors]
         prices = fetch_all_prices_batch(enabled_instruments)
@@ -488,7 +620,7 @@ class MonitorEngine:
                 cv = metrics["cv_accuracy_mean"] * 100
                 logger.info(f"Retrained {inst.SYMBOL_DISPLAY}: test={acc:.1f}% cv={cv:.1f}%")
 
-            now = datetime.utcnow().strftime("%H:%M")
+            now = datetime.now(timezone.utc).strftime("%H:%M")
             self.last_retrain_status = f"OK ({now})"
             self._last_retrain_time = time.time()
 
@@ -511,6 +643,36 @@ class MonitorEngine:
         thread = threading.Thread(target=self._retrain_background, daemon=True)
         thread.start()
 
+    @staticmethod
+    def _stdin_is_interactive() -> bool:
+        try:
+            return sys.stdin is not None and sys.stdin.isatty()
+        except (AttributeError, ValueError, OSError):
+            return False
+
+    def _restore_positions(self, mon: InstrumentMonitor):
+        """Restart safety: signals left without an outcome by a previous run
+        are replayed against the completed TRAIN_INTERVAL candles with the v3
+        rules; the newest unresolved one becomes the open position again."""
+        if self.signal_store is None:
+            return
+        inst = mon.instrument
+        try:
+            df = mon.get_ai_candles()
+            info = self.position_tracker.restore_from_store(
+                mon.display_name, df,
+                cost_pct_fn=lambda price, inst=inst:
+                    COSTS.round_trip_cost_pct(inst, price) * 100,
+                interval_hours=parse_interval_hours(inst.TRAIN_INTERVAL),
+                eod_close=not inst.SESSION_24_7,
+            )
+            if info["resolved"] or info["open"]:
+                logger.info(f"{mon.display_name}: restored state - "
+                            f"{info['resolved']} outcome(s) replayed, "
+                            f"open position: {info['open']}")
+        except Exception as e:
+            logger.error(f"{mon.display_name}: restore failed: {e}", exc_info=True)
+
     def _keyboard_listener(self):
         if sys.platform == "win32":
             import msvcrt
@@ -527,6 +689,12 @@ class MonitorEngine:
             while self.is_running:
                 if select.select([sys.stdin], [], [], 0.1)[0]:
                     key = sys.stdin.read(1)
+                    if key == '':
+                        # EOF (stdin is /dev/null under systemd, a closed
+                        # pipe, ...): without this break select() reports
+                        # "readable" forever and the loop spins at 100% CPU.
+                        logger.info("stdin closed - keyboard listener stopped")
+                        return
                     if key == '\x17':
                         self._pending_command = "ctrl_w"
                     elif key == '\x0c':
@@ -564,8 +732,13 @@ class MonitorEngine:
         self._start_time = time.time()
         logger.info(f"Trading Monitor v2 starting with {len(self.monitors)} instruments...")
 
-        kb_thread = threading.Thread(target=self._keyboard_listener, daemon=True)
-        kb_thread.start()
+        # Keyboard shortcuts only make sense on an interactive terminal. Under
+        # systemd/cron/nohup stdin is /dev/null and the listener must not run.
+        if self._stdin_is_interactive():
+            kb_thread = threading.Thread(target=self._keyboard_listener, daemon=True)
+            kb_thread.start()
+        else:
+            logger.info("Non-interactive stdin - keyboard shortcuts disabled")
 
         for mon in self.monitors:
             live = mon.fetcher.get_live_price()
@@ -573,6 +746,7 @@ class MonitorEngine:
             mon.prev_close = live["prev_close"]
             mon.change = live["change"]
             mon.change_pct = live["change_pct"]
+            self._restore_positions(mon)
 
         while self.is_running:
             try:

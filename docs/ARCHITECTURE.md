@@ -44,46 +44,50 @@ configurație** — cea din RESULTS.md e consumată; un test nou cere date noi.
 
 Intrare: `gold_monitor/main.py:123` (`cmd_monitor`) — dacă niciun instrument
 nu e `ENABLED`, explică poarta și iese (`main.py:127-133`). Altfel pornește
-`MonitorEngine.run()` (`engine/monitor_engine.py:562`).
+`MonitorEngine.run()` (`engine/monitor_engine.py`).
+
+**Din v3.1 modul implicit este `SIGNAL_MODE="ai_only"`**
+(`config/settings.py`, `MonitorConfig`): calea live reproduce exact
+modelul validat de backtester. Regula de aur: *ce validezi este ce rulezi*.
 
 ```mermaid
 flowchart TD
-    P[Prețuri live la 10s<br/>TradingView → TwelveData → Yahoo<br/>data/gold_fetcher.py:216] --> PI[_process_instrument<br/>monitor_engine.py:331]
-    PI --> TR[PositionTracker: SL/TP + trailing + EOD<br/>engine/position_tracker.py:174,199]
-    TR -- poziție închisă --> DC[Discord: notificare închidere] & OUT[record_outcome → signals.db<br/>data/signal_store.py:130]
-    PI -- la 60s, în sesiune --> AN[_run_analysis<br/>monitor_engine.py:291]
-    AN --> AI[AI: XGBoost pe candele 1h<br/>gate ADX 1h ≥ adx_min<br/>strategies/ai_strategy.py:46]
-    AN --> SC[Scalping: RSI+BB pe 5m<br/>gate ADX 5m ≥ 25]
-    AN --> MO[Momentum: MACD+EMA pe 5m<br/>gate ADX 5m ≥ 25]
-    AI & SC & MO --> V[Vot ponderat pe regim<br/>monitor_engine.py:205<br/>50/25/25, prag 0.35, R:R ≥ 1.5]
-    V -- semnal NOU --> S[Discord + CSV + signals.db<br/>_log_signal monitor_engine.py:140]
-    S --> OP[open_position în tracker<br/>monitor_engine.py:423]
-    OP --> TR
+    P[Prețuri live la 10s<br/>TradingView → TwelveData → Yahoo<br/>data/gold_fetcher.py] --> PI[_process_ai_only<br/>la 60s]
+    PI --> C[Candele 1h COMPLETE<br/>candela în formare e aruncată<br/>data/candles.py]
+    C -- candelă nouă --> R[resolve_with_candles<br/>reguli v3: fitiluri, SL primul, gap<br/>engine/execution_rules.py]
+    R -- poziție închisă --> DC[Discord închidere] & OUT[record_outcome → signals.db]
+    C -- flat --> G{ADX 1h ≥ adx_min}
+    G --> AI[XGBoost pe candele complete<br/>strategies/ai_strategy.py]
+    AI --> F{reward > cost<br/>și R:R ≥ min_rr<br/>ca în Backtester}
+    F --> S[Semnal: intrare = preț live ≈ open următor<br/>SL/TP la distanțele ATR ale candelei de semnal]
+    S --> D[Discord + CSV + signals.db<br/>_log_signal] --> OP[open_position<br/>signal_candle_ts = candela de semnal]
+    OP --> R
 ```
 
 Detalii importante:
 
-- **Două timeframe-uri, intenționat separate** (nota din
-  `monitor_engine.py:33-36`): AI-ul analizează candele pe `TRAIN_INTERVAL`
-  (1h) — exact timeframe-ul pe care a fost antrenat și backtestat (regulă
-  v3); candele 5m servesc doar afișajul și strategiile clasice. Candele 1h
-  sunt cache-uite 5 min (`InstrumentMonitor.get_ai_candles`,
-  `monitor_engine.py:75`).
-- **Vot pe regim** (`_vote_signals`, `monitor_engine.py:219-232`): în
-  TRENDING momentum ×1.5 / scalping ×0.5; în SIDEWAYS invers; regimul vine
-  din ADX (`_get_market_regime`, `monitor_engine.py:196`).
-- **Sesiune per instrument** (`_is_session_active`,
-  `monitor_engine.py:177`): aurul/FX doar luni–vineri 08–20 UTC
-  (London+NY); crypto are `SESSION_24_7=True` → mereu activ și exceptat de
-  la închiderea forțată EOD (21:00 UTC, `position_tracker.py:199`).
-- **Semnal nou = direcție diferită de ultima** (`monitor_engine.py:392`);
-  o inversare închide întâi poziția urmărită (`SIGNAL_REVERSED`,
-  `monitor_engine.py:400-408`).
-- **Reantrenare automată în fundal la 6h** (`_retrain_background`,
-  `monitor_engine.py:453`; interval la `:97`).
-- **Trailing SL** (`position_tracker.py:68`): se activează după +0.3%
-  profit, urmărește la 1×ATR (parametri în
-  `config/settings.py:228-230`).
+- **Numai candele complete** (`data/candles.py`, `drop_incomplete_candle`):
+  yfinance întoarce candela în formare ca ultimul rând; modelul e evaluat
+  doar pe close-uri de candele încheiate, ca în backtest.
+- **O singură evaluare per candelă 1h nouă** (`_ai_only_step`,
+  `monitor_engine.py`): întâi outcome-ul poziției deschise (regulile v3
+  din `engine/execution_rules.py`, aceleași folosite de backtester), apoi,
+  doar dacă e flat, predicția + gate-ul ADX pe 1h + filtrul cost/R:R.
+- **Intrarea** = prețul live din momentul semnalului (echivalentul
+  „open-ului candelei următoare"); SL/TP păstrează distanțele ATR ale
+  candelei de semnal, ancorate la intrarea reală — exact ca
+  `_simulate_trades`.
+- **Absente intenționat** în `ai_only`: filtrul de sesiune, închiderea EOD,
+  trailing SL, votul între strategii — nu există în modelul validat.
+  Modul `vote` (legacy) le păstrează pentru experimente, dar nu e validat
+  de backtester și nu trebuie folosit pentru colectarea de dovezi.
+- **Restart-safe**: la pornire, semnalele fără outcome sunt rejucate din
+  candele (`PositionTracker.restore_from_store`,
+  `engine/position_tracker.py`): cele vechi până la semnalul următor
+  (altfel `SIGNAL_REVERSED` la intrarea acestuia), cel mai nou redevine
+  poziția deschisă. Nicio gaură în date după un crash.
+- **Reantrenare automată în fundal la 6h** (`_retrain_background`);
+  versiunea modelului e salvată per semnal tocmai de aceea.
 - Execuția e **manuală pe XTB** — monitorul doar notifică.
 
 ### Persistența semnalelor (`data/signal_store.py`)
@@ -121,12 +125,15 @@ reguli (docstring `backtester.py:4-16`, implementare în `_simulate_trades`,
 1. **Semnal pe CLOSE-ul candelei N → intrare pe OPEN-ul candelei N+1**
    (starea `pending`, `backtester.py:257-271`). Close-ul candelei curente nu
    e cunoscut în timp real la momentul deciziei.
-2. **SL/TP verificate pe HIGH/LOW** — fitilurile contează
-   (`backtester.py:280-293`), nu doar close-ul.
-3. **SL+TP atinse în aceeași candelă → SL primul** (ordinea verificărilor la
-   `backtester.py:281-286`) — presupunerea conservatoare.
-4. **Gap prin SL → execuție la OPEN** (preț mai prost, motiv `GAP_SL`,
-   `backtester.py:281-282`); **TP exact la nivelul TP**, niciodată mai bine.
+2. **SL/TP verificate pe HIGH/LOW** — fitilurile contează, nu doar
+   close-ul.
+3. **SL+TP atinse în aceeași candelă → SL primul** — presupunerea
+   conservatoare.
+4. **Gap prin SL → execuție la OPEN** (preț mai prost, motiv `GAP_SL`);
+   **TP exact la nivelul TP**, niciodată mai bine.
+   Regulile 2–4 sunt implementate o singură dată în
+   `engine/execution_rules.py` (`v3_exit`) și folosite identic de
+   backtester și de tracker-ul live (v3.1).
 5. **Închiderea forțată de final de perioadă actualizează equity-ul**
    (`backtester.py:316-328`) — bug-ul istoric înregistra trade-ul fără
    update de equity.

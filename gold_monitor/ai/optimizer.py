@@ -143,7 +143,8 @@ def optimize_instrument(instrument: InstrumentConfig, df: pd.DataFrame) -> list:
                 continue
 
             equity_curve = np.array([100000.0] + curve)
-            m = BacktestMetrics.compute_all(trades, equity_curve)
+            m = BacktestMetrics.compute_all(trades, equity_curve,
+                                            bt.instrument.candles_per_year())
 
             all_results.append(OptimResult(
                 threshold=threshold,
