@@ -54,6 +54,15 @@ class SentinelConfig:
 
     # Claude (the user asked for Claude Fable 5.1 explicitly)
     model: str = os.getenv("SENTINEL_MODEL", "claude-fable-5-1")
+    # Which brain talks to Claude:
+    #   "agent_sdk" (default) - Claude Agent SDK over the locally logged-in
+    #       Claude Code CLI -> uses the Claude Pro/Max SUBSCRIPTION allowance.
+    #       Needs `claude` installed and logged in; ANTHROPIC_API_KEY unset.
+    #   "api" - Anthropic API via the anthropic SDK -> needs ANTHROPIC_API_KEY
+    #       and prepaid API credits (a subscription does not include the API).
+    brain: str = os.getenv("SENTINEL_BRAIN", "agent_sdk").strip().lower()
+    sdk_fallback_model: str = os.getenv("SENTINEL_FALLBACK_MODEL", "")
+    sdk_research_max_turns: int = 8
     effort_research: str = "medium"
     effort_decision: str = "high"
     max_tokens: int = 8000

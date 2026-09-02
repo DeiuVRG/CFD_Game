@@ -46,12 +46,29 @@ JSON validat de schemă (`sentinel/schema.py`); prompturile sunt în
 `fallbacks: "default"` (dacă clasificatorii de siguranță refuză cererea,
 API-ul o re-rulează automat pe modelul recomandat de Anthropic).
 
+## Cum plătim modelul: abonament vs. API
+
+Un abonament Claude Pro/Max **nu include API-ul** (API-ul se plătește
+separat, per token, din credite preplătite în Console). Santinela are de
+aceea două „creiere” interschimbabile, cu aceleași prompturi și scheme:
+
+| `SENTINEL_BRAIN` | Cum ajunge la Claude | Ce consumă | Cerințe |
+|---|---|---|---|
+| `agent_sdk` (**implicit**) | Claude Agent SDK peste CLI-ul Claude Code logat local | limitele de utilizare ale **abonamentului** | `claude` instalat și logat (`claude auth status`), **fără** `ANTHROPIC_API_KEY` în mediu (o cheie API are prioritate față de abonament și s-ar factura per token) |
+| `api` | SDK-ul `anthropic`, direct pe API | credite API preplătite | `ANTHROPIC_API_KEY` |
+
+Cercetarea de piață folosește web search în ambele cazuri (tool-urile
+WebSearch/WebFetch din Claude Code, respectiv server tool-ul API).
+Programul anunțat de Anthropic cu credit lunar separat pentru Agent SDK
+(200 $/lună la Max 20x) era **în pauză** la data scrierii — până atunci
+utilizarea intră în limitele normale ale abonamentului.
+
 ## Configurare
 
 Toate secretele în `gold_monitor/.env` (vezi `gold_monitor/.env.example`):
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
+SENTINEL_BRAIN=agent_sdk     # sau api (atunci: ANTHROPIC_API_KEY=sk-ant-...)
 CAPITAL_API_KEY=...          CAPITAL_IDENTIFIER=...   CAPITAL_PASSWORD=...
 CAPITAL_MODE=demo            # singura valoare acceptată de sentinel
 DISCORD_WEBHOOK_URL=...      # opțional
@@ -65,6 +82,7 @@ python -m sentinel.main --markets gold        # confirmă epic-urile pe demo
 python -m sentinel.main --run --dry-run       # decizii logate, zero ordine
 python -m sentinel.main --run                 # DEMO
 python -m sentinel.main --run --no-llm        # control determinist
+python -m sentinel.main --run --brain api     # API key în loc de abonament
 python -m sentinel.main --report              # rezumat decisions.db
 ```
 

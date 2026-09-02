@@ -35,7 +35,14 @@ def build(cfg: SentinelConfig, no_llm: bool):
     from sentinel.signals_reader import SignalsReader
     from sentinel.store import DecisionStore
 
-    brain = NullBrain() if no_llm else ClaudeBrain(cfg)
+    if no_llm:
+        brain = NullBrain()
+    elif cfg.brain == "api":
+        brain = ClaudeBrain(cfg)
+    else:
+        from sentinel.brain_sdk import AgentSdkBrain
+        brain = AgentSdkBrain(cfg)
+    logging.getLogger(__name__).info(f"brain: {type(brain).__name__} (model {cfg.model})")
     broker = DemoBroker(cfg)
     store = DecisionStore(cfg.decisions_db)
     if store.get_state("last_signal_id") is None:
@@ -80,12 +87,16 @@ def main():
     g.add_argument("--report", action="store_true", help="summarize decisions.db")
     p.add_argument("--dry-run", action="store_true", help="log decisions, place no orders")
     p.add_argument("--no-llm", action="store_true", help="deterministic pass-through (no model)")
+    p.add_argument("--brain", choices=["agent_sdk", "api"],
+                   help="agent_sdk = Claude subscription via Claude Code (default); api = Anthropic API key")
     args = p.parse_args()
 
     setup_logging()
     cfg = SentinelConfig()
     if args.dry_run:
         cfg.dry_run = True
+    if args.brain:
+        cfg.brain = args.brain
 
     if args.report:
         cmd_report(cfg)
