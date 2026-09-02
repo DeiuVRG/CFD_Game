@@ -72,7 +72,7 @@ SENTINEL_BRAIN=agent_sdk     # sau api (atunci: ANTHROPIC_API_KEY=sk-ant-...)
 CAPITAL_API_KEY=...          CAPITAL_IDENTIFIER=...   CAPITAL_PASSWORD=...
 CAPITAL_MODE=demo            # singura valoare acceptată de sentinel
 DISCORD_WEBHOOK_URL=...      # opțional
-SENTINEL_EPIC_GOLD=GOLD      SENTINEL_EPIC_BTC=BITCOIN   # verifică cu --markets
+SENTINEL_EPIC_GOLD=GOLD      SENTINEL_EPIC_BTC=BTCUSD   # verifică cu --markets
 SENTINEL_DRY_RUN=false       SENTINEL_WEB_SEARCH=true
 ```
 
