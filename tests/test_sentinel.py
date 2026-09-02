@@ -36,10 +36,14 @@ def signal_row(**over):
 
 
 def cfg(tmp_path, **over):
+    # Hermetic: SentinelConfig defaults read the environment / gold_monitor/.env
+    # (SENTINEL_DRY_RUN, CAPITAL_MODE, ...); tests pin every such field.
     c = SentinelConfig(signals_db=str(tmp_path / "signals.db"),
                        decisions_db=str(tmp_path / "decisions.db"),
                        instruments=[InstrumentMap(GOLD, "GOLD")],
-                       discord_webhook="")
+                       discord_webhook="", dry_run=False, capital_mode="demo",
+                       brain="api", web_search=True, model="claude-fable-5-1",
+                       sdk_fallback_model="")
     for k, v in over.items():
         setattr(c, k, v)
     return c
