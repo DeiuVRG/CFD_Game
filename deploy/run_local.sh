@@ -53,7 +53,7 @@ status_one() {
 case "${1:-}" in
     start)
         [ -x "$PY" ] || { echo "venv missing: $PY"; exit 1; }
-        start_one monitor  "$ROOT/gold_monitor" "$PY" main.py --monitor
+        start_one monitor  "$ROOT/gold_monitor" env TERM=xterm "$PY" main.py --monitor
         start_one sentinel "$ROOT"              "$PY" -m sentinel.main --run
         ;;
     stop)    stop_one sentinel; stop_one monitor ;;
