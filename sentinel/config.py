@@ -42,7 +42,7 @@ class SentinelConfig:
     decisions_db: str = os.path.join(SENTINEL_DIR, "data", "decisions.db")
     instruments: List[InstrumentMap] = field(default_factory=lambda: [
         InstrumentMap("XAU/USD (Gold)", os.getenv("SENTINEL_EPIC_GOLD", "GOLD")),
-        InstrumentMap("BTC/USD (Bitcoin)", os.getenv("SENTINEL_EPIC_BTC", "BITCOIN")),
+        InstrumentMap("BTC/USD (Bitcoin)", os.getenv("SENTINEL_EPIC_BTC", "BTCUSD")),
     ])
 
     # Cadence
