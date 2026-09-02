@@ -487,3 +487,75 @@ def test_claude_brain_research_without_web_search(tmp_path):
     brain = ClaudeBrain(cfg(tmp_path, web_search=False), client=client)
     brain.research(GOLD, "s")
     assert msgs.calls[0]["tools"] == []
+
+
+# ------------------------------------------------------- Agent SDK brain --
+
+class FakeResult:
+    """Duck-typed claude_agent_sdk.ResultMessage."""
+    def __init__(self, result=None, structured_output=None, is_error=False,
+                 stop_reason="end_turn", usage=None):
+        self.result, self.structured_output, self.is_error = result, structured_output, is_error
+        self.stop_reason = stop_reason
+        self.usage = usage if usage is not None else {"input_tokens": 12, "output_tokens": 34}
+
+
+def fake_query(results):
+    """query_fn that records (prompt, options) and yields scripted results."""
+    calls = []
+    queue = list(results)
+
+    async def query(*, prompt, options=None, **_):
+        calls.append((prompt, options))
+        yield SimpleNamespace(type="assistant")
+        yield queue.pop(0)
+    query.calls = calls
+    return query
+
+
+def sdk_brain(tmp_path, results, **cfg_over):
+    from sentinel.brain_sdk import AgentSdkBrain
+    q = fake_query(results)
+    return AgentSdkBrain(cfg(tmp_path, **cfg_over), query_fn=q, cwd=str(tmp_path / "cwd")), q
+
+
+def test_agent_sdk_brain_decision_uses_structured_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-be-removed")
+    body = {"action": "VETO", "size_fraction": 0.0, "confidence": 0.9,
+            "rationale": "CPI in 20 min", "risks": ["event"]}
+    brain, q = sdk_brain(tmp_path, [FakeResult(result=json.dumps(body), structured_output=body)])
+    assert "ANTHROPIC_API_KEY" not in __import__("os").environ      # subscription path
+    decision, usage = brain.decide_open("{ctx}", "brief")
+    assert decision.action == "VETO" and decision.rationale == "CPI in 20 min"
+    assert usage.input_tokens == 12 and usage.model == "claude-fable-5-1"
+    prompt, opts = q.calls[0]
+    assert "brief" in prompt and "{ctx}" in prompt
+    assert opts.model == "claude-fable-5-1" and opts.tools == [] and opts.max_turns == 3
+    assert opts.output_format["schema"]["required"] == ["action", "size_fraction", "confidence", "rationale", "risks"]
+    assert opts.setting_sources == [] and opts.effort == "high"
+    assert opts.system_prompt.startswith("You are the sentinel")
+
+
+def test_agent_sdk_brain_research_uses_web_tools(tmp_path):
+    brain, q = sdk_brain(tmp_path, [FakeResult(result="  Gold: FOMC tomorrow.  ")])
+    r = brain.research(GOLD, "{snap}")
+    assert r.brief == "Gold: FOMC tomorrow." and r.refused is False
+    _, opts = q.calls[0]
+    assert opts.tools == ["WebSearch", "WebFetch"] and opts.allowed_tools == ["WebSearch", "WebFetch"]
+    assert opts.max_turns == 8 and opts.effort == "medium" and opts.output_format is None
+
+
+def test_agent_sdk_brain_fails_closed(tmp_path):
+    brain, _ = sdk_brain(tmp_path, [FakeResult(is_error=True, result="boom"),
+                                    FakeResult(stop_reason="refusal"),
+                                    FakeResult(result="garbage", structured_output=None)])
+    assert brain.decide_open("c", "r")[0] is None
+    assert brain.decide_manage("c", "r")[0] is None
+    assert brain.decide_open("c", "r")[0] is None
+
+    async def broken(*, prompt, options=None, **_):
+        raise RuntimeError("CLI not found")
+        yield  # pragma: no cover
+    from sentinel.brain_sdk import AgentSdkBrain
+    b = AgentSdkBrain(cfg(tmp_path), query_fn=broken, cwd=str(tmp_path / "cwd2"))
+    assert b.research(GOLD, "s").brief == "" and b.decide_open("c", "r")[0] is None

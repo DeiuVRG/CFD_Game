@@ -159,6 +159,14 @@ sudo systemctl daemon-reload && sudo systemctl enable --now cfd-sentinel
 sudo journalctl -u cfd-sentinel -f
 ```
 
+**Abonament vs. API pe server**: cu `SENTINEL_BRAIN=agent_sdk` (implicit,
+folosește abonamentul Claude Max) serverul are nevoie de CLI-ul Claude Code
+instalat și **logat ca userul serviciului** (`npm install -g
+@anthropic-ai/claude-code`, apoi `sudo -u cfd claude login` — fluxul de
+login afișează un URL de deschis din browserul tău), fără
+`ANTHROPIC_API_KEY` în `.env`. Alternativa fără CLI: `SENTINEL_BRAIN=api` +
+`ANTHROPIC_API_KEY` cu credite API preplătite.
+
 Verifică întâi epic-urile pe demo: `python -m sentinel.main --markets gold`
 și `--markets bitcoin`; pune valorile în `SENTINEL_EPIC_GOLD` /
 `SENTINEL_EPIC_BTC`. Prima săptămână rulează cu `--dry-run` (sau
