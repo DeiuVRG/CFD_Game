@@ -10,3 +10,4 @@ models/*.pkl
 *.egg-info/
 .pytest_cache/
 data_cache/
+.run/
