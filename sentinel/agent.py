@@ -278,12 +278,34 @@ class Sentinel:
             else:
                 self._record(final_action="HOLD", reason=reason, **base, **llm)
 
+    # ------------------------------------------------------------ pre-research
+    def pre_research(self):
+        """At minute >= pre_research_minute, refresh the research of every
+        instrument whose cached brief would be older than ~10 minutes at the
+        coming candle close (so the close-time decision is fast)."""
+        if not self.cfg.pre_research:
+            return
+        now = self.now()
+        if now.minute < self.cfg.pre_research_minute:
+            return
+        for imap in self.cfg.instruments:
+            fresh = self.store.latest_research(imap.signal_name, 10 * 60, now=now)
+            if fresh is not None:
+                continue
+            snapshot = self._snapshot(imap)
+            res = self.brain.research(imap.signal_name, str(snapshot))
+            self.store.insert_research(imap.signal_name, res.brief, res.usage.model,
+                                       res.usage.input_tokens, res.usage.output_tokens,
+                                       ts_utc=self.now_iso())
+            logger.info(f"pre-research done for {imap.signal_name}")
+
     # ------------------------------------------------------------ loop
     def run_once(self):
         self.refresh_account()
         self.sync_closed()
         self.process_signals()
         self.review_positions()
+        self.pre_research()
 
     def run_forever(self):
         logger.info(f"Sentinel started (mode={'DRY_RUN' if self.cfg.dry_run else 'DEMO'}, "

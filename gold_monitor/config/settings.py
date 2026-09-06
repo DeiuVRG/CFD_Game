@@ -208,11 +208,13 @@ class MonitorConfig:
     #       NOT validated by the backtester; kept for experimentation.
     SIGNAL_MODE: str = "ai_only"
     FETCH_INTERVAL_SEC: int = 10  # 10 sec (TradingView is free)
-    ANALYSIS_INTERVAL_SEC: int = 60
+    ANALYSIS_INTERVAL_SEC: int = 60      # 5m dashboard indicators (vote mode: analysis)
     CANDLE_LOOKBACK: int = 100
-    # AI candles (TRAIN_INTERVAL timeframe) are refreshed at most this often;
-    # a new 1h candle only appears hourly so 5 min is plenty.
-    AI_CANDLE_REFRESH_SEC: int = 300
+    # ai_only mode: how often to look for a NEW completed TRAIN_INTERVAL
+    # candle (cheap: the fetch itself is throttled by AI_CANDLE_REFRESH_SEC
+    # and forced at each interval boundary).
+    AI_CHECK_INTERVAL_SEC: int = 15
+    AI_CANDLE_REFRESH_SEC: int = 60
 
 
 @dataclass

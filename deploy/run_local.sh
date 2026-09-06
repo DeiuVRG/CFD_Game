@@ -12,7 +12,12 @@
 # ------------------------------------------------------------------
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PY="$ROOT/.venv/bin/python"
+# The venv must live OUTSIDE cloud-synced folders (OneDrive Files On-Demand
+# evicts site-packages to the cloud and imports then block). Override with
+# CFD_VENV=/path/to/venv.
+VENV="${CFD_VENV:-$HOME/.venvs/cfd_game}"
+[ -x "$VENV/bin/python" ] || VENV="$ROOT/.venv"
+PY="$VENV/bin/python"
 RUN="$ROOT/.run"; mkdir -p "$RUN"
 
 start_one() {  # name, workdir, command...
@@ -55,9 +60,14 @@ case "${1:-}" in
         [ -x "$PY" ] || { echo "venv missing: $PY"; exit 1; }
         start_one monitor  "$ROOT/gold_monitor" env TERM=xterm "$PY" main.py --monitor
         start_one sentinel "$ROOT"              "$PY" -m sentinel.main --run
+        # macOS: keep the machine awake while the monitor runs (needs AC power
+        # for -s; the lid must stay open unless an external display is attached)
+        if command -v caffeinate >/dev/null 2>&1; then
+            start_one caffeinate "$ROOT" caffeinate -i -s -w "$(cat "$RUN/monitor.pid")"
+        fi
         ;;
-    stop)    stop_one sentinel; stop_one monitor ;;
+    stop)    stop_one sentinel; stop_one monitor; stop_one caffeinate ;;
     restart) "$0" stop; sleep 1; "$0" start ;;
-    status)  status_one monitor; status_one sentinel ;;
+    status)  status_one monitor; status_one sentinel; status_one caffeinate ;;
     *) echo "usage: bash deploy/run_local.sh {start|stop|restart|status}"; exit 1 ;;
 esac

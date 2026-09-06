@@ -51,10 +51,17 @@ unde execuția cinstită arată **−16.2%** ([RESULTS.md](RESULTS.md)).
 ## Setup
 
 ```bash
-pip install -r gold_monitor/requirements.txt
+# venv-ul ÎN AFARA folderelor sincronizate în cloud (OneDrive/iCloud
+# evacuează fișierele „on demand” și importurile Python se blochează)
+python3 -m venv ~/.venvs/cfd_game && source ~/.venvs/cfd_game/bin/activate
+pip install -r gold_monitor/requirements.txt -r sentinel/requirements.txt
 cd gold_monitor
-cp .env.example .env    # DISCORD_WEBHOOK_URL, DISCORD_MENTION (opțional)
+cp .env.example .env    # DISCORD_WEBHOOK_URL, Capital.com demo, SENTINEL_* (vezi fișierul)
 ```
+
+Dacă repo-ul stă totuși într-un folder sincronizat, marchează-l „Always
+Keep on This Device” (OneDrive) / „Keep Downloaded” (iCloud), altfel și
+`.git` poate ajunge în aceeași situație.
 
 ## Comenzi — gold_monitor
 
