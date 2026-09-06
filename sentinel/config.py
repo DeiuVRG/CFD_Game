@@ -46,7 +46,13 @@ class SentinelConfig:
     ])
 
     # Cadence
-    poll_interval_sec: int = 60          # new-signal poll
+    poll_interval_sec: int = 10          # new-signal poll
+    # Pre-fetch the market research at minute >= pre_research_minute of every
+    # hour so that a signal on the candle close only needs the ~25s decision
+    # call. Costs one research call per instrument per hour even when no
+    # signal comes (subscription usage!) -> opt-in.
+    pre_research: bool = _env_bool("SENTINEL_PRE_RESEARCH", False)
+    pre_research_minute: int = 55
     review_interval_sec: int = 900       # open-position review (LLM call per position)
     signal_max_age_sec: int = 900        # older signals are stale -> never executed
     research_ttl_sec: int = 3600         # market research reused within this window

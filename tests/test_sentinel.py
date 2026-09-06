@@ -43,7 +43,7 @@ def cfg(tmp_path, **over):
                        instruments=[InstrumentMap(GOLD, "GOLD")],
                        discord_webhook="", dry_run=False, capital_mode="demo",
                        brain="api", web_search=True, model="claude-fable-5-1",
-                       sdk_fallback_model="")
+                       sdk_fallback_model="", pre_research=False)
     for k, v in over.items():
         setattr(c, k, v)
     return c
@@ -563,3 +563,30 @@ def test_agent_sdk_brain_fails_closed(tmp_path):
     from sentinel.brain_sdk import AgentSdkBrain
     b = AgentSdkBrain(cfg(tmp_path), query_fn=broken, cwd=str(tmp_path / "cwd2"))
     assert b.research(GOLD, "s").brief == "" and b.decide_open("c", "r")[0] is None
+
+
+# ---------------------------------------------------------- pre-research --
+
+def test_pre_research_runs_only_late_in_the_hour_and_once(tmp_path):
+    brain = ScriptedBrain(approve())
+    s, store, broker, _ = make_sentinel(tmp_path, [], brain, pre_research=True)
+    s._now = lambda: NOW.replace(minute=30)
+    s.run_once()
+    assert brain.research_calls == 0
+    s._now = lambda: NOW.replace(minute=55)
+    s.run_once(); s.run_once()                       # second call: cached (< 10 min)
+    assert brain.research_calls == 1
+    assert store.latest_research(GOLD, 3600, now=NOW.replace(minute=56)) is not None
+    # a signal on the next candle close reuses the pre-fetched brief
+    s.signals.rows.append(signal_row(id=1, ts_utc=ts(NOW.replace(hour=11, minute=0))))
+    s._now = lambda: NOW.replace(hour=11, minute=1)
+    s.run_once()
+    assert brain.research_calls == 1 and broker.opened
+
+
+def test_pre_research_is_opt_in(tmp_path):
+    brain = ScriptedBrain(approve())
+    s, *_ = make_sentinel(tmp_path, [], brain)
+    s._now = lambda: NOW.replace(minute=58)
+    s.run_once()
+    assert brain.research_calls == 0

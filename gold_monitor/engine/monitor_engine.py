@@ -55,6 +55,7 @@ class InstrumentMonitor:
         self._ai_df_time: float = 0
         # Open time of the last COMPLETED AI candle processed (ai_only mode)
         self.last_ai_candle_ts = None
+        self.last_ai_check_time: float = 0
 
         # Display values
         self.price: float = 0
@@ -455,25 +456,27 @@ class MonitorEngine:
 
     def _process_ai_only(self, mon: InstrumentMonitor, result: dict) -> dict:
         now = time.time()
-        if now - mon.last_analysis_time < MONITOR.ANALYSIS_INTERVAL_SEC:
-            return result
-        mon.last_analysis_time = now
 
         # 5m candles: dashboard indicators only (no signal role in this mode)
-        df = mon.fetcher.get_candles()
-        if not df.empty and len(df) >= 60:
-            close, high, low = df["close"], df["high"], df["low"]
-            rsi_series = Indicators.rsi(close, 14)
-            _, _, hist_series = Indicators.macd(close)
-            adx_series = Indicators.adx(high, low, close, 14)
-            atr_series = Indicators.atr(high, low, close, 14)
-            mon.rsi = float(rsi_series.iloc[-1]) if not pd.isna(rsi_series.iloc[-1]) else 50
-            mon.macd_hist = float(hist_series.iloc[-1]) if not pd.isna(hist_series.iloc[-1]) else 0
-            mon.adx = float(adx_series.iloc[-1]) if not pd.isna(adx_series.iloc[-1]) else 0
-            mon.atr = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else 0
+        if now - mon.last_analysis_time >= MONITOR.ANALYSIS_INTERVAL_SEC:
+            mon.last_analysis_time = now
+            df = mon.fetcher.get_candles()
+            if not df.empty and len(df) >= 60:
+                close, high, low = df["close"], df["high"], df["low"]
+                rsi_series = Indicators.rsi(close, 14)
+                _, _, hist_series = Indicators.macd(close)
+                adx_series = Indicators.adx(high, low, close, 14)
+                atr_series = Indicators.atr(high, low, close, 14)
+                mon.rsi = float(rsi_series.iloc[-1]) if not pd.isna(rsi_series.iloc[-1]) else 50
+                mon.macd_hist = float(hist_series.iloc[-1]) if not pd.isna(hist_series.iloc[-1]) else 0
+                mon.adx = float(adx_series.iloc[-1]) if not pd.isna(adx_series.iloc[-1]) else 0
+                mon.atr = float(atr_series.iloc[-1]) if not pd.isna(atr_series.iloc[-1]) else 0
 
-        df_ai = mon.get_ai_candles()
-        result.update(self._ai_only_step(mon, df_ai, mon.price))
+        # The validated path: look for a new completed candle more often
+        if now - mon.last_ai_check_time >= MONITOR.AI_CHECK_INTERVAL_SEC:
+            mon.last_ai_check_time = now
+            df_ai = mon.get_ai_candles()
+            result.update(self._ai_only_step(mon, df_ai, mon.price))
         return result
 
     def _ai_only_step(self, mon: InstrumentMonitor, df_ai: pd.DataFrame,
