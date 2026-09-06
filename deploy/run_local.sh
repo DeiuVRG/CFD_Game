@@ -25,7 +25,9 @@ start_one() {  # name, workdir, command...
     if [ -f "$RUN/$name.pid" ] && kill -0 "$(cat "$RUN/$name.pid")" 2>/dev/null; then
         echo "  $name: already running (pid $(cat "$RUN/$name.pid"))"; return
     fi
-    (cd "$dir" && nohup "$@" >> "$RUN/$name.out" 2>&1 < /dev/null & echo $! > "$RUN/$name.pid")
+    # exec inside the background subshell so the recorded pid IS the process
+    (cd "$dir" && exec nohup "$@" >> "$RUN/$name.out" 2>&1 < /dev/null) &
+    echo $! > "$RUN/$name.pid"
     sleep 1
     if kill -0 "$(cat "$RUN/$name.pid")" 2>/dev/null; then
         echo "  $name: started (pid $(cat "$RUN/$name.pid")) -> $RUN/$name.out"
