@@ -87,6 +87,13 @@ outcome-ul ipotetic (TP/SL/EOD, preț de ieșire, P&L brut și net de costuri),
 o singură dată per semnal. `--report` agregă totul per instrument și exportă
 CSV pentru audit extern.
 
+## Date
+
+Din v3.3 candelele (1h pentru AI, 5m pentru dashboard, 2 ani pentru
+antrenare) vin din istoricul de prețuri **Capital.com** (`CANDLE_SOURCE=capital`,
+citire doar, host demo): CFD-ul exact tranzacționat, timp real, fără
+lag-ul de weekend/sărbători al Yahoo. Yahoo rămâne rezervă automată.
+
 ## Instrumente & costuri
 
 - **Gold (GC=F / XAU-USD)** — model pips: spread 3 pips × $0.10.
