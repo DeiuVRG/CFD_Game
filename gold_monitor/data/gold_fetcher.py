@@ -447,11 +447,27 @@ class MarketFetcher:
             return pd.DataFrame()
 
     def get_training_data(self) -> pd.DataFrame:
-        """Get historical data for AI training."""
-        return self.get_candles(
-            period=self.instrument.TRAIN_PERIOD,
-            interval=self.instrument.TRAIN_INTERVAL,
-        )
+        """Historical data for AI training - STRICTLY from the configured
+        source. Training on Yahoo (NY-hour features, futures basis) while
+        running live on Capital.com candles would silently mix sources, so
+        when Capital.com is configured and unavailable this returns an
+        empty frame (the caller skips this training cycle) instead of
+        falling back."""
+        period, interval = self.instrument.TRAIN_PERIOD, self.instrument.TRAIN_INTERVAL
+        if MONITOR.CANDLE_SOURCE == "capital" and self.instrument.CAPITAL_EPIC:
+            client = _capital_client()
+            if client is None:
+                logger.error("Training data: CANDLE_SOURCE=capital but no credentials - "
+                             "refusing to train on a different source")
+                return pd.DataFrame()
+            try:
+                n = bars_for(period, interval, self.instrument.SESSION_24_7)
+                return client.get_candles(self.instrument.CAPITAL_EPIC, interval, n)
+            except Exception as e:
+                logger.error(f"Training data: Capital.com unavailable ({e}) - "
+                             f"skipping this training cycle (no Yahoo fallback)")
+                return pd.DataFrame()
+        return self._yahoo_candles(period, interval)
 
 
 # Backwards compatibility alias
