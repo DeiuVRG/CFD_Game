@@ -136,3 +136,50 @@ def test_fetcher_uses_capital_then_falls_back_to_yahoo(monkeypatch):
     monkeypatch.setattr(MONITOR, "CANDLE_SOURCE", "yahoo")
     monkeypatch.setattr(gold_fetcher, "_capital_client", lambda: Stub())
     assert list(f.get_candles(period="5d", interval="5m")["src"]) == ["yahoo"]
+
+
+def test_training_data_never_falls_back_to_yahoo(monkeypatch):
+    from config.settings import INSTRUMENTS, MONITOR
+    from data import gold_fetcher
+    gold = next(i for i in INSTRUMENTS if i.SYMBOL == "GC=F")
+    monkeypatch.setattr(MONITOR, "CANDLE_SOURCE", "capital")
+    yahoo_calls = []
+    monkeypatch.setattr(gold_fetcher.MarketFetcher, "_yahoo_candles",
+                        lambda self, period, interval, count=None: yahoo_calls.append(1) or pd.DataFrame({"src": ["yahoo"]}))
+
+    class Failing:
+        def get_candles(self, epic, interval, count):
+            raise CapitalPricesError("timeout")
+    monkeypatch.setattr(gold_fetcher, "_capital_client", lambda: Failing())
+    assert gold_fetcher.MarketFetcher(gold).get_training_data().empty
+    monkeypatch.setattr(gold_fetcher, "_capital_client", lambda: None)
+    assert gold_fetcher.MarketFetcher(gold).get_training_data().empty
+    assert yahoo_calls == []                                   # never mixed
+
+    monkeypatch.setattr(MONITOR, "CANDLE_SOURCE", "yahoo")
+    assert list(gold_fetcher.MarketFetcher(gold).get_training_data()["src"]) == ["yahoo"]
+
+
+def test_client_retries_transient_errors(monkeypatch):
+    import requests as rq
+    import common.capital_prices as cp
+    monkeypatch.setattr(cp.time, "sleep", lambda s: None)
+
+    class Flaky(FakeHTTP):
+        def __init__(self):
+            super().__init__(n_bars=10); self.fails = 2
+        def get(self, url, params=None, headers=None, timeout=None):
+            if self.fails:
+                self.fails -= 1
+                raise rq.exceptions.ReadTimeout("read timed out")
+            return super().get(url, params=params, headers=headers, timeout=timeout)
+    http = Flaky()
+    c = CapitalPrices(api_key="k", identifier="i", password="p", http=http)
+    assert len(c.get_candles("GOLD", "1h", 5)) == 5
+
+    class Dead(FakeHTTP):
+        def get(self, *a, **k):
+            raise rq.exceptions.ConnectionError("down")
+    dead = CapitalPrices(api_key="k", identifier="i", password="p", http=Dead())
+    with pytest.raises(CapitalPricesError):
+        dead.get_candles("GOLD", "1h", 5)

@@ -26,6 +26,8 @@ DEMO_URL = "https://demo-api-capital.backend-capital.com"
 MAX_BARS_PER_REQUEST = 1000
 SESSION_REFRESH_SEC = 480          # sessions expire after 10 min of inactivity
 MIN_REQUEST_GAP_SEC = 0.12         # ~10 req/s API limit
+READ_TIMEOUT_SEC = 30
+TRANSIENT_RETRIES = 3              # read timeouts / connection resets / 5xx
 
 RESOLUTIONS = {
     "1m": "MINUTE", "5m": "MINUTE_5", "15m": "MINUTE_15", "30m": "MINUTE_30",
@@ -86,22 +88,34 @@ class CapitalPrices:
     def _get(self, path: str, params: dict) -> dict:
         with self._lock:
             self._ensure_session()
-            gap = MIN_REQUEST_GAP_SEC - (time.time() - self._last_request)
-            if gap > 0:
-                time.sleep(gap)
-            for attempt in (1, 2):
-                r = self._http.get(f"{self.base_url}{path}", params=params,
-                                   headers={"X-CAP-API-KEY": self.api_key, **self._tokens},
-                                   timeout=20)
+            last_error = None
+            for attempt in range(1, TRANSIENT_RETRIES + 2):
+                gap = MIN_REQUEST_GAP_SEC - (time.time() - self._last_request)
+                if gap > 0:
+                    time.sleep(gap)
+                try:
+                    r = self._http.get(f"{self.base_url}{path}", params=params,
+                                       headers={"X-CAP-API-KEY": self.api_key, **self._tokens},
+                                       timeout=READ_TIMEOUT_SEC)
+                except requests.RequestException as e:      # timeout, reset, DNS...
+                    last_error = e
+                    self._last_request = time.time()
+                    logger.warning(f"Capital.com {path}: {e} (attempt {attempt})")
+                    time.sleep(min(2.0 * attempt, 6.0))
+                    continue
                 self._last_request = time.time()
-                if r.status_code == 401 and attempt == 1:
+                if r.status_code == 401:
                     self._login()
+                    continue
+                if r.status_code >= 500 or r.status_code == 429:
+                    last_error = CapitalPricesError(f"{r.status_code} {r.text[:80]}")
+                    time.sleep(min(2.0 * attempt, 6.0))
                     continue
                 if r.status_code != 200:
                     raise CapitalPricesError(f"GET {path}: {r.status_code} {r.text[:120]}")
                 self._session_time = time.time()
                 return r.json()
-            raise CapitalPricesError(f"GET {path}: unauthorized")
+            raise CapitalPricesError(f"GET {path}: giving up after retries ({last_error})")
 
     # ------------------------------------------------------------- candles
     def get_candles(self, epic: str, interval: str, count: int) -> pd.DataFrame:
