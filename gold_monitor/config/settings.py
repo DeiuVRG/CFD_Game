@@ -138,6 +138,10 @@ INSTRUMENTS = [
         # Demo-tier execution by the sentinel (user decision 2026-09-02):
         # signals flow to the Capital.com DEMO account only.
         DEMO_ENABLED=True,
+        # Demo tier runs the exact combination MEASURED in Faza 4 (the one
+        # with known OOS numbers), not the global defaults (user decision
+        # 2026-09-07). Re-declare before any new OOS run.
+        SL_ATR=2.5, TP_ATR=4.0, CONFIDENCE=0.50, ADX_MIN=15.0, MIN_RR=1.0,
     ),
     InstrumentConfig(
         SYMBOL="EURUSD=X",
@@ -176,7 +180,7 @@ INSTRUMENTS = [
         # BTC volatility is far above gold: 0.005 over a 6h horizon labels
         # almost everything as BUY/SELL noise. Start at 0.01 and let the
         # optimizer search the grid below.
-        PRICE_CHANGE_THRESHOLD=0.01,
+        PRICE_CHANGE_THRESHOLD=0.015,   # Faza 4 chosen label threshold
         THRESHOLD_GRID=[0.008, 0.01, 0.015, 0.02],
         # Percentage cost model (takes priority over pips): retail CFD BTC
         # round-trip spread is typically ~0.20-0.35% (e.g. XTB lists ~0.22%
@@ -194,6 +198,8 @@ INSTRUMENTS = [
         # ADX>=25. Full numbers: RESULTS.md.
         ENABLED=False,
         DEMO_ENABLED=True,   # demo-tier only (sentinel), see Gold above
+        # Faza 4 measured combination (see Gold above)
+        SL_ATR=2.5, TP_ATR=4.0, CONFIDENCE=0.45, ADX_MIN=25.0, MIN_RR=1.0,
     ),
 ]
 
