@@ -7,8 +7,32 @@ import pandas as pd
 import requests
 import yfinance as yf
 
-from config.settings import InstrumentConfig, TWELVEDATA_API_KEY
+from config.settings import MONITOR, InstrumentConfig, TWELVEDATA_API_KEY
 from data.fetch_utils import retry_call, get_yf_session
+
+# common/ lives at the repo root (gold_monitor treats its own dir as import root)
+import os as _os, sys as _sys
+_REPO_ROOT = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+if _REPO_ROOT not in _sys.path:
+    _sys.path.insert(0, _REPO_ROOT)
+from common.capital_prices import CapitalPrices, bars_for  # noqa: E402
+
+_CAPITAL: "CapitalPrices | None" = None
+_CAPITAL_CHECKED = False
+
+
+def _capital_client():
+    """Shared read-only Capital.com price client (None when no credentials)."""
+    global _CAPITAL, _CAPITAL_CHECKED
+    if not _CAPITAL_CHECKED:
+        _CAPITAL_CHECKED = True
+        c = CapitalPrices()
+        if c.available:
+            _CAPITAL = c
+            logger.info("Candle source: Capital.com price history (demo host, read-only)")
+        else:
+            logger.warning("CANDLE_SOURCE=capital but CAPITAL_* credentials are missing - using Yahoo")
+    return _CAPITAL
 
 # Suppress yfinance "possibly delisted" spam when market is closed
 logging.getLogger("yfinance").setLevel(logging.CRITICAL)
@@ -362,10 +386,27 @@ class MarketFetcher:
         interval: str = None,
         count: int = None,
     ) -> pd.DataFrame:
-        """Get OHLCV candles via yfinance (for AI analysis)."""
+        """OHLC candles: Capital.com price history (CANDLE_SOURCE=capital,
+        default) with Yahoo as fallback, or Yahoo directly."""
         period = period or self.instrument.HISTORY_PERIOD
         interval = interval or self.instrument.CANDLE_INTERVAL
 
+        if MONITOR.CANDLE_SOURCE == "capital" and self.instrument.CAPITAL_EPIC:
+            client = _capital_client()
+            if client is not None:
+                try:
+                    n = count or bars_for(period, interval, self.instrument.SESSION_24_7)
+                    df = client.get_candles(self.instrument.CAPITAL_EPIC, interval, n)
+                    if not df.empty:
+                        return df
+                    logger.warning(f"Capital.com returned no candles for "
+                                   f"{self.instrument.CAPITAL_EPIC} {interval} - trying Yahoo")
+                except Exception as e:
+                    logger.warning(f"Capital.com candles failed for "
+                                   f"{self.instrument.CAPITAL_EPIC}: {e} - trying Yahoo")
+        return self._yahoo_candles(period, interval, count)
+
+    def _yahoo_candles(self, period: str, interval: str, count: int = None) -> pd.DataFrame:
         try:
             def _download():
                 ticker = yf.Ticker(self.instrument.SYMBOL, session=get_yf_session())

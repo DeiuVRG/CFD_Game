@@ -67,6 +67,10 @@ flowchart TD
 
 Detalii importante:
 
+- **Candelele vin de la Capital.com** (`common/capital_prices.py`,
+  `CANDLE_SOURCE=capital`, implicit din v3.3): CFD-ul exact pe care îl
+  tranzacționăm, în timp real, cu istoric de 2+ ani pentru antrenare;
+  Yahoo rămâne rezervă. Modelele se antrenează pe aceeași sursă.
 - **Numai candele complete** (`data/candles.py`, `drop_incomplete_candle`):
   yfinance întoarce candela în formare ca ultimul rând; modelul e evaluat
   doar pe close-uri de candele încheiate, ca în backtest.

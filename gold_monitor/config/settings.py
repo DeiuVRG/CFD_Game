@@ -41,6 +41,7 @@ class InstrumentConfig:
     TWELVEDATA_SYMBOL: str = ""  # Twelve Data symbol for real-time prices
     TV_SYMBOL: str = ""      # TradingView symbol for real-time spot prices
     TV_EXCHANGE: str = "cfd"  # TradingView scan endpoint (cfd, forex or crypto)
+    CAPITAL_EPIC: str = ""    # Capital.com epic: candle source when CANDLE_SOURCE=capital
     CANDLE_INTERVAL: str = "5m"
     HISTORY_PERIOD: str = "5d"
     TRAIN_PERIOD: str = "2y"
@@ -117,6 +118,7 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "")
 INSTRUMENTS = [
     InstrumentConfig(
         SYMBOL="GC=F",
+        CAPITAL_EPIC="GOLD",
         SYMBOL_DISPLAY="XAU/USD (Gold)",
         MODEL_PATH="models/gold_xgb.pkl",
         TWELVEDATA_SYMBOL="XAU/USD",
@@ -139,6 +141,7 @@ INSTRUMENTS = [
     ),
     InstrumentConfig(
         SYMBOL="EURUSD=X",
+        CAPITAL_EPIC="EURUSD",
         SYMBOL_DISPLAY="EUR/USD",
         MODEL_PATH="models/eurusd_xgb.pkl",
         TWELVEDATA_SYMBOL="EUR/USD",
@@ -151,6 +154,7 @@ INSTRUMENTS = [
     ),
     InstrumentConfig(
         SYMBOL="GBPUSD=X",
+        CAPITAL_EPIC="GBPUSD",
         SYMBOL_DISPLAY="GBP/USD",
         MODEL_PATH="models/gbpusd_xgb.pkl",
         TWELVEDATA_SYMBOL="GBP/USD",
@@ -163,6 +167,7 @@ INSTRUMENTS = [
     ),
     InstrumentConfig(
         SYMBOL="BTC-USD",
+        CAPITAL_EPIC="BTCUSD",
         SYMBOL_DISPLAY="BTC/USD (Bitcoin)",
         MODEL_PATH="models/btc_xgb.pkl",
         TWELVEDATA_SYMBOL="BTC/USD",
@@ -195,6 +200,14 @@ INSTRUMENTS = [
 
 @dataclass
 class MonitorConfig:
+    # Where candles (AI 1h path, 5m dashboard, training data) come from:
+    #   "capital" (default) - Capital.com price history: the exact CFD we
+    #       trade, real-time, 24/5-24/7, 2y+ of history. Needs the
+    #       CAPITAL_* credentials in .env; falls back to Yahoo otherwise.
+    #   "yahoo" - yfinance (GC=F future for gold; lags on weekends/holidays).
+    # Train and run live on the SAME source (features such as hour-of-day
+    # and the futures/spot basis differ between them).
+    CANDLE_SOURCE: str = os.getenv("CANDLE_SOURCE", "capital").strip().lower()
     # How live signals are produced:
     #   "ai_only" (default) - mirrors the validated v3 backtest exactly: the
     #       XGBoost prediction on completed TRAIN_INTERVAL candles, 1h ADX

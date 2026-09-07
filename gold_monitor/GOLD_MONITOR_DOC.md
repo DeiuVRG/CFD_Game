@@ -63,6 +63,14 @@ Din v3.1 monitorul are doua moduri (`MonitorConfig.SIGNAL_MODE` in
 exact modelul validat de backtester, ca dovezile din `signals.db` sa fie
 despre strategia care a fost efectiv testata.
 
+### Sursa de candele (v3.3)
+`CANDLE_SOURCE=capital` (implicit): candelele 1h (AI), 5m (dashboard) si
+datele de antrenare vin din istoricul de preturi **Capital.com** — exact
+CFD-ul tranzactionat, in timp real, 24/5 (aur) / 24/7 (BTC), 2+ ani de
+istoric (1.000 bare/cerere, paginare). Yahoo (`GC=F`, futures) ramane
+rezerva automata si optiunea `CANDLE_SOURCE=yahoo`. Antrenarea si live-ul
+trebuie sa foloseasca aceeasi sursa (ora zilei si baza futures/spot difera).
+
 ### La fiecare 10 secunde:
 - Ia pretul LIVE (TradingView → TwelveData → Yahoo)
 - Afiseaza dashboard-ul in terminal
