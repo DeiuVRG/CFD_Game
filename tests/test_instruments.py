@@ -121,3 +121,14 @@ def test_real_money_gate_stays_closed_and_demo_tier_is_explicit():
     assert BTC.DEMO_ENABLED is True and BTC.tier == "demo"
     assert get_instrument("EURUSD=X").active is False
     assert get_instrument("GBPUSD=X").active is False
+
+
+def test_demo_tier_runs_the_faza4_measured_combinations():
+    """What runs on demo must be the configuration whose OOS numbers are
+    known (RESULTS.md), not the unmeasured global defaults."""
+    assert (GOLD.sl_atr(), GOLD.tp_atr(), GOLD.confidence_threshold(),
+            GOLD.adx_min(), GOLD.min_rr()) == (2.5, 4.0, 0.50, 15.0, 1.0)
+    assert GOLD.PRICE_CHANGE_THRESHOLD == 0.005
+    assert (BTC.sl_atr(), BTC.tp_atr(), BTC.confidence_threshold(),
+            BTC.adx_min(), BTC.min_rr()) == (2.5, 4.0, 0.45, 25.0, 1.0)
+    assert BTC.PRICE_CHANGE_THRESHOLD == 0.015
