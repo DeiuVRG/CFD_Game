@@ -117,6 +117,16 @@ class CapitalPrices:
                 return r.json()
             raise CapitalPricesError(f"GET {path}: giving up after retries ({last_error})")
 
+    # ------------------------------------------------------------ snapshot
+    def get_snapshot(self, epic: str) -> dict:
+        """Current bid/offer (+mid) and market status for one epic."""
+        d = self._get(f"/api/v1/markets/{epic}", {})
+        snap = d.get("snapshot", {}) or {}
+        bid, offer = snap.get("bid"), snap.get("offer")
+        mid = (float(bid) + float(offer)) / 2 if bid is not None and offer is not None else None
+        return {"epic": epic, "bid": bid, "offer": offer, "mid": mid,
+                "status": snap.get("marketStatus"), "time": snap.get("updateTime")}
+
     # ------------------------------------------------------------- candles
     def get_candles(self, epic: str, interval: str, count: int) -> pd.DataFrame:
         """Up to `count` most recent completed-or-forming bars, oldest first,
