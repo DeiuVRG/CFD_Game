@@ -158,19 +158,23 @@ class DiscordNotifier:
         return success
 
     def send_test(self) -> bool:
-        from config.settings import INSTRUMENTS
-        instruments_str = ", ".join(i.SYMBOL_DISPLAY for i in INSTRUMENTS if i.ENABLED)
+        from config.settings import INSTRUMENTS, MONITOR
+        instruments_str = ", ".join(f"{i.SYMBOL_DISPLAY} [{i.tier}]"
+                                    for i in INSTRUMENTS if i.active) or "niciunul"
+        if MONITOR.SIGNAL_MODE == "ai_only":
+            mode = ("ai_only: XGBoost pe candele 1h complete, gate ADX, "
+                    "SL/TP pe ATR, outcome-uri cu regulile v3 (Capital.com)")
+        else:
+            mode = "vote (legacy, nevalidat): AI + scalping + momentum, trailing SL, sesiune, EOD"
 
         embed = {
-            "title": "\u2705 Trading Monitor v2 - Test Message",
-            "description": (
-                f"Monitorizare activa: {instruments_str}\n"
-                f"Features: Walk-forward AI, Trailing SL, Session filter, Regime detection"
-            ),
+            "title": "\u2705 Trading Monitor - Test Message",
+            "description": f"Monitorizare activa: {instruments_str}\nMod: {mode}",
             "color": 0x00AAFF,
             "fields": [
                 {"name": "Status", "value": "Conectat", "inline": True},
-                {"name": "Versiune", "value": "v2.0", "inline": True},
+                {"name": "Versiune", "value": "v3.3", "inline": True},
+                {"name": "Sursa candele", "value": MONITOR.CANDLE_SOURCE, "inline": True},
             ],
             "footer": {"text": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")},
         }
