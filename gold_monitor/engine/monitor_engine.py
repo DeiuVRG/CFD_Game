@@ -13,7 +13,7 @@ from ai.feature_engineer import FeatureEngineer
 from ai.model import GoldPredictor
 from config.settings import (INSTRUMENTS, MONITOR, STRATEGY, AI, COSTS,
                              InstrumentConfig, parse_interval_hours)
-from data.candles import drop_incomplete_candle
+from data.candles import split_incomplete_candle
 from data.gold_fetcher import MarketFetcher, fetch_all_prices_batch
 from data.indicators import Indicators
 from data.signal_store import SignalStore, model_version
@@ -56,6 +56,10 @@ class InstrumentMonitor:
         # Open time of the last COMPLETED AI candle processed (ai_only mode)
         self.last_ai_candle_ts = None
         self.last_ai_check_time: float = 0
+        # The candle currently forming (same data source): its OPEN is the
+        # backtest's entry price for a signal on the previous close.
+        self.forming_open: float = 0.0
+        self.forming_ts = None
 
         # Display values
         self.price: float = 0
@@ -94,8 +98,14 @@ class InstrumentMonitor:
             interval=self.instrument.TRAIN_INTERVAL,
         )
         if not df.empty:
-            self._ai_df = drop_incomplete_candle(df, self.instrument.TRAIN_INTERVAL)
+            completed, forming = split_incomplete_candle(df, self.instrument.TRAIN_INTERVAL)
+            self._ai_df = completed
             self._ai_df_time = now
+            if forming is not None:
+                self.forming_open = float(forming["open"])
+                self.forming_ts = pd.Timestamp(forming["timestamp"])
+            else:
+                self.forming_open, self.forming_ts = 0.0, None
 
         return self._ai_df if self._ai_df is not None else pd.DataFrame()
 
@@ -543,7 +553,21 @@ class MonitorEngine:
                         f"cost={cost:.4f} rr={reward / risk if risk else 0:.2f}")
             return result
 
-        entry = live_price if live_price and live_price > 0 else close
+        # Entry = the OPEN of the candle forming right after the signal
+        # candle, from the SAME data source (the backtest's "next open").
+        # The external live-price feed is only a fallback: it is a different
+        # source and can go stale (2026-09-08: the feed froze for hours and
+        # two signals were booked at prices that never traded).
+        forming_open = getattr(mon, "forming_open", 0.0)
+        forming_ts = getattr(mon, "forming_ts", None)
+        expected_next = last_ts + pd.Timedelta(hours=parse_interval_hours(inst.TRAIN_INTERVAL))
+        if forming_open > 0 and forming_ts is not None and pd.Timestamp(forming_ts) == expected_next:
+            entry = forming_open
+        elif live_price and live_price > 0:
+            logger.warning(f"[{name}] forming-candle open unavailable - entry from live feed {live_price}")
+            entry = live_price
+        else:
+            entry = close
         if sig.direction == "BUY":
             sl, tp = entry - sl_dist, entry + tp_dist
         else:

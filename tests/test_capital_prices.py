@@ -183,3 +183,45 @@ def test_client_retries_transient_errors(monkeypatch):
     dead = CapitalPrices(api_key="k", identifier="i", password="p", http=Dead())
     with pytest.raises(CapitalPricesError):
         dead.get_candles("GOLD", "1h", 5)
+
+
+def test_snapshot_mid_price():
+    class SnapHTTP(FakeHTTP):
+        def get(self, url, params=None, headers=None, timeout=None):
+            if "/markets/" in url:
+                return SimpleNamespace(status_code=200, text="", json=lambda: {
+                    "snapshot": {"bid": 100.0, "offer": 101.0, "marketStatus": "TRADEABLE",
+                                 "updateTime": "2026-09-08T10:00:00"}})
+            return super().get(url, params=params, headers=headers, timeout=timeout)
+    c = CapitalPrices(api_key="k", identifier="i", password="p", http=SnapHTTP())
+    snap = c.get_snapshot("GOLD")
+    assert snap["mid"] == 100.5 and snap["status"] == "TRADEABLE" and snap["epic"] == "GOLD"
+
+
+def test_live_price_batch_covers_demo_tier_and_prefers_capital(monkeypatch):
+    """Regression: the batch used to filter on ENABLED and returned {} for
+    demo-tier instruments -> the live price froze at start-up."""
+    from config.settings import INSTRUMENTS, MONITOR
+    from data import gold_fetcher
+    demo = [i for i in INSTRUMENTS if i.active]
+    assert demo and all(not i.ENABLED for i in demo)
+    monkeypatch.setattr(MONITOR, "CANDLE_SOURCE", "capital")
+
+    class Snap:
+        def get_snapshot(self, epic):
+            return {"epic": epic, "mid": {"GOLD": 4400.25, "BTCUSD": 78400.5}[epic], "status": "TRADEABLE"}
+    monkeypatch.setattr(gold_fetcher, "_capital_client", lambda: Snap())
+    tv_calls = []
+    monkeypatch.setattr(gold_fetcher, "_fetch_tradingview_batch", lambda insts: tv_calls.append(insts) or {})
+    prices = gold_fetcher.fetch_all_prices_batch(INSTRUMENTS)
+    assert prices == {"XAU/USD": 4400.25, "BTC/USD": 78400.5}
+    assert tv_calls == []                                   # Capital covered everything
+
+    class Broken:
+        def get_snapshot(self, epic):
+            raise CapitalPricesError("down")
+    monkeypatch.setattr(gold_fetcher, "_capital_client", lambda: Broken())
+    monkeypatch.setattr(gold_fetcher, "_fetch_tradingview_batch",
+                        lambda insts: {i.TWELVEDATA_SYMBOL: 1.0 for i in insts})
+    prices = gold_fetcher.fetch_all_prices_batch(INSTRUMENTS)
+    assert set(prices) == {"XAU/USD", "BTC/USD"}          # fell through to TradingView

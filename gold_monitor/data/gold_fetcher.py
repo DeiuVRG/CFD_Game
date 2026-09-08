@@ -244,14 +244,38 @@ def fetch_all_prices_batch(instruments: list) -> dict:
     Fills missing instruments from lower-priority sources.
     Returns dict: { 'XAU/USD': price, 'EUR/USD': price, ... }
     """
-    enabled = [i for i in instruments if i.ENABLED]
+    # Every monitored instrument: real-money gate passed OR demo tier. (Bug
+    # until 2026-09-08: filtering on ENABLED alone returned {} for demo-tier
+    # instruments, so the live price froze at its start-up value.)
+    enabled = [i for i in instruments if i.active]
     if not enabled:
         return {}
 
     all_prices = {}
     source = "Yahoo"
 
-    # 1. TradingView (primary - spot prices, free, no limits)
+    # 0. Capital.com snapshot (the broker's own bid/offer mid) - the same
+    #    source as the candles, so display, entries and outcomes agree.
+    client = _capital_client() if MONITOR.CANDLE_SOURCE == "capital" else None
+    if client is not None:
+        for inst in enabled:
+            if not inst.CAPITAL_EPIC:
+                continue
+            try:
+                snap = client.get_snapshot(inst.CAPITAL_EPIC)
+                if snap.get("mid"):
+                    all_prices[inst.TWELVEDATA_SYMBOL] = round(float(snap["mid"]), 5)
+            except Exception as e:
+                logger.warning(f"Capital.com snapshot failed for {inst.CAPITAL_EPIC}: {e}")
+        if all_prices:
+            source = "Capital.com"
+        enabled_missing = [i for i in enabled if i.TWELVEDATA_SYMBOL not in all_prices]
+        if not enabled_missing:
+            credit_tracker.set_source(source)
+            return all_prices
+        enabled = enabled_missing
+
+    # 1. TradingView (spot prices, free, no limits)
     tv_instruments = [i for i in enabled if i.TV_SYMBOL]
     if tv_instruments:
         tv_prices = _fetch_tradingview_batch(tv_instruments)

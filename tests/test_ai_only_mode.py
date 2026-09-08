@@ -230,3 +230,28 @@ def test_too_few_candles_is_a_noop(engine):
     mon = make_mon(price=1000)
     assert engine._ai_only_step(mon, trending_candles(30), 1000) == {
         "discord_sent": False, "close_sent": False}
+
+
+# ------------------------------------------- entry = forming candle open --
+
+def test_entry_uses_the_forming_candle_open_not_the_live_feed(engine):
+    from data.candles import split_incomplete_candle
+    df = trending_candles()
+    mon = make_mon(price=9999.0)                       # stale external feed
+    last_ts = pd.Timestamp(df["timestamp"].iloc[-1])
+    mon.forming_open, mon.forming_ts = 1234.5, last_ts + timedelta(hours=1)
+    engine._ai_only_step(mon, df, live_price=9999.0)
+    sig = engine.discord.sent[0]
+    assert sig.entry_price == 1234.5
+    assert sig.stop_loss == pytest.approx(1234.5 - 15) and sig.take_profit == pytest.approx(1234.5 + 30)
+
+    # a forming candle that is NOT the next one (stale cache) -> live feed fallback
+    engine.position_tracker.close_position(NAME, 1240.0, "TEST")
+    df2 = append_candle(df, 1234.5, 1240, 1230, 1238)
+    mon.forming_open, mon.forming_ts = 1111.0, last_ts + timedelta(hours=5)
+    engine._ai_only_step(mon, df2, live_price=1238.7)
+    assert engine.discord.sent[-1].entry_price == 1238.7
+
+    completed, forming = split_incomplete_candle(
+        df2, "1h", now=pd.Timestamp(df2["timestamp"].iloc[-1]) + timedelta(minutes=10))
+    assert len(completed) == len(df2) - 1 and forming["open"] == 1234.5
