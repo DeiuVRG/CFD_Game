@@ -80,7 +80,7 @@ def optimize_instrument(instrument: InstrumentConfig, df: pd.DataFrame) -> list:
 
     for threshold in thresholds:
         labels = FeatureEngineer.create_labels(
-            df, horizon=AI.PREDICTION_HORIZON, threshold=threshold,
+            df, horizon=instrument.horizon(), threshold=threshold,
         )
 
         valid_mask = features.notna().all(axis=1) & labels.notna()

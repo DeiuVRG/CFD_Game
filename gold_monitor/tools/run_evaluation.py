@@ -175,7 +175,7 @@ def evaluate(inst, skip_train_final=False, with_legacy=True) -> dict:
         print(f"\n  >>> Training final production model on full data...")
         features = FeatureEngineer.create_features(df)
         labels = FeatureEngineer.create_labels(
-            df, horizon=AI.PREDICTION_HORIZON, threshold=best.threshold)
+            df, horizon=inst.horizon(), threshold=best.threshold)
         valid = features.notna().all(axis=1) & labels.notna()
         predictor = GoldPredictor(model_path=inst.MODEL_PATH)
         metrics = predictor.train(features[valid], labels[valid].astype(int))

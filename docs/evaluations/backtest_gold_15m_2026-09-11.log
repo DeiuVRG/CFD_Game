@@ -1,0 +1,64 @@
+
+Downloading data for XAU/USD (Gold 15m)...
+2026-09-11 15:54:37,175 [INFO] data.gold_fetcher: Candle source: Capital.com price history (demo host, read-only)
+2026-09-11 15:54:37,487 [INFO] common.capital_prices: Capital.com price session created
+Running backtest on 47971 candles...
+2026-09-11 15:55:26,765 [INFO] ai.model: Model trained: test_acc=0.498, cv_acc=0.422+/-0.056
+  Split: train=23965, optim=11983, oos=11983
+  Model CV accuracy: 42.2%
+
+  --- Optimizer period (middle 25%) ---
+  --- Out-of-sample period (last 25%) ---
+
+============================================================
+  BACKTEST REPORT: XAU/USD (Gold 15m)
+============================================================
+
+  OPTIMIZER PERIOD (middle 25% - in-sample):
+    Total Return:    +8.20%
+    Sharpe (candle): 0.70
+    Sharpe (trade):  0.79
+    Sortino Ratio:   0.14
+    Max Drawdown:    -9.55%
+    Calmar Ratio:    1.93
+    Trades:          76
+    Win Rate:        38.2%
+    Profit Factor:   1.18
+    Avg Trade P&L:   +0.122%
+    Avg Win:         +2.129%
+    Avg Loss:        -1.117%
+    Total Costs:     3.73%
+
+  OUT-OF-SAMPLE (last 25% - real test):
+    Total Return:    -2.33%
+    Sharpe (candle): -0.27
+    Sharpe (trade):  -0.16
+    Sortino Ratio:   -0.05
+    Max Drawdown:    -15.94%
+    Calmar Ratio:    -0.19
+    Trades:          86
+    Win Rate:        40.7%
+    Profit Factor:   0.97
+    Avg Trade P&L:   -0.018%
+    Avg Win:         +1.505%
+    Avg Loss:        -1.063%
+    Total Costs:     4.36%
+
+  COMPARISON:
+    Return:  optim=+8.20%  vs  OOS=-2.33%
+    Sharpe:  optim=0.70  vs  OOS=-0.27
+    -> OVERFITTING: Positive in-sample, negative OOS
+
+  Last 10 OOS trades:
+    [W] SELL @ 4106.95 -> 4040.83 (TP) | P&L: +1.555% (cost: 0.055%)
+    [L] SELL @ 4161.55 -> 4185.13 (SL) | P&L: -0.621% (cost: 0.054%)
+    [L] SELL @ 4503.34 -> 4525.90 (SL) | P&L: -0.551% (cost: 0.050%)
+    [W] SELL @ 4517.74 -> 4489.84 (TP) | P&L: +0.568% (cost: 0.050%)
+    [L] SELL @ 4459.43 -> 4480.96 (SL) | P&L: -0.533% (cost: 0.050%)
+    [W] BUY  @ 4619.50 -> 4665.38 (TP) | P&L: +0.944% (cost: 0.049%)
+    [L] SELL @ 4646.75 -> 4661.93 (SL) | P&L: -0.375% (cost: 0.048%)
+    [W] SELL @ 4577.29 -> 4492.97 (TP) | P&L: +1.793% (cost: 0.049%)
+    [W] SELL @ 4480.99 -> 4365.09 (TP) | P&L: +2.536% (cost: 0.050%)
+    [W] SELL @ 4434.12 -> 4353.24 (TP) | P&L: +1.773% (cost: 0.051%)
+============================================================
+EXIT=0

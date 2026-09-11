@@ -469,7 +469,7 @@ class Backtester:
         threshold = threshold or self.instrument.PRICE_CHANGE_THRESHOLD
         features = FeatureEngineer.create_features(df)
         labels = FeatureEngineer.create_labels(
-            df, horizon=AI.PREDICTION_HORIZON,
+            df, horizon=self.instrument.horizon(),
             threshold=threshold,
         )
 
@@ -547,7 +547,7 @@ class Backtester:
         threshold = threshold or self.instrument.PRICE_CHANGE_THRESHOLD
         features = FeatureEngineer.create_features(df)
         labels = FeatureEngineer.create_labels(
-            df, horizon=AI.PREDICTION_HORIZON,
+            df, horizon=self.instrument.horizon(),
             threshold=threshold,
         )
 

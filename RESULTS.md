@@ -161,3 +161,34 @@ trade-Sharpe negativ, deci rămân `ENABLED=False`. Ce se schimbă din v3.1:
 Tabelele de mai sus **nu au fost re-rulate** (fereastra OOS e consumată);
 pragul rămâne declarat la 0,5 și se re-declară explicit, înainte de
 următoarea rulare OOS, dacă vrem să-l schimbăm.
+
+---
+
+## XAU/USD (Gold) pe candele de 15 minute — evaluare 2026-09-11
+
+Motivație: cerere explicită a proprietarului pentru decizii mai dese decât
+cele orare. Instrument nou (`XAU/USD (Gold 15m)`, `models/gold15m_xgb.pkl`),
+evaluat de la zero prin același protocol: date Capital.com (47.971 candele
+15m, 2024-08-30 → 2026-09-11), split 50/25/25, optimizer pe fereastra de
+mijloc (2.048 combinații, 4 praguri de etichetare, orizont 8 candele = 2h),
+regulă de selecție pre-declarată, **OOS rulat o singură dată**. Costuri:
+spread Capital.com 7,5 pips (unde ar executa), ~0,05% dus-întors.
+
+**Configurația aleasă**: prag 0,0015, SL 2,5×ATR, TP 4,0×ATR, încredere ≥
+0,60, ADX ≥ 25, R:R ≥ 1.
+
+| Fereastră | Return | Trades | WinRate | PF | Avg/trade | Trade-Sharpe | MaxDD | Costuri cum. |
+|---|---|---|---|---|---|---|---|---|
+| Optimizare (in-sample) | **+8,20%** | 76 | 38,2% | 1,18 | +0,122% | 0,79 | −9,55% | 3,73% |
+| **OOS (decizie)** | **−2,33%** | 86 | 40,7% | 0,97 | −0,018% | −0,16 | **−15,94%** | 4,36% |
+
+Criterii OOS: trades ✔ (86) · PF ✘ (0,97) · expectanță ✘ (−0,018%) ·
+maxDD ✘ (−15,9%) · trade-Sharpe ✘ (−0,16) → **ENABLED=False,
+DEMO_ENABLED=False**.
+
+Interpretare: pe 15 minute semnalul e practic o monedă aruncată după
+costuri — brut ar fi ≈ +2% pe OOS, costurile cumulate de 4,4% îl duc sub
+zero. Frecvența dorită (≈3 trade-uri/săptămână doar de la aur) există, dar
+nu și edge-ul. Fereastra OOS pentru această configurație este consumată;
+un nou test cere date noi. Log-urile complete: `docs/evaluations/
+optimizer_gold_15m_2026-09-11.log`, `backtest_gold_15m_2026-09-11.log`.

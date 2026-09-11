@@ -36,7 +36,7 @@ def train_instrument(instrument: InstrumentConfig) -> bool:
     features = FeatureEngineer.create_features(df)
     labels = FeatureEngineer.create_labels(
         df,
-        horizon=AI.PREDICTION_HORIZON,
+        horizon=instrument.horizon(),
         threshold=instrument.PRICE_CHANGE_THRESHOLD,
     )
 

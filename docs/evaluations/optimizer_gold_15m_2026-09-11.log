@@ -1,0 +1,62 @@
+
+Downloading data for XAU/USD (Gold 15m)...
+2026-09-11 15:52:05,964 [INFO] data.gold_fetcher: Candle source: Capital.com price history (demo host, read-only)
+2026-09-11 15:52:06,265 [INFO] common.capital_prices: Capital.com price session created
+
+============================================================
+  OPTIMIZER: XAU/USD (Gold 15m)
+============================================================
+  Label threshold grid: [0.0015, 0.002, 0.003, 0.004]
+
+  [thr=0.0015] Training on 23965 samples (labels: {0: 12845, 1: 6128, -1: 4992})...
+2026-09-11 15:52:49,733 [INFO] ai.model: Model trained: test_acc=0.498, cv_acc=0.422+/-0.056
+  [thr=0.0015] Model CV accuracy: 42.2%
+  [thr=0.0015] Pre-computing predictions for 11983 optimization samples...
+  [thr=0.0015] Testing 512 parameter combinations through the v3 execution engine...
+
+  [thr=0.002] Training on 23965 samples (labels: {0: 15537, 1: 4607, -1: 3821})...
+2026-09-11 15:53:09,380 [INFO] ai.model: Model trained: test_acc=0.572, cv_acc=0.470+/-0.079
+  [thr=0.002] Model CV accuracy: 47.0%
+  [thr=0.002] Pre-computing predictions for 11983 optimization samples...
+  [thr=0.002] Testing 512 parameter combinations through the v3 execution engine...
+
+  [thr=0.003] Training on 23965 samples (labels: {0: 19028, 1: 2650, -1: 2287})...
+2026-09-11 15:53:29,409 [INFO] ai.model: Model trained: test_acc=0.685, cv_acc=0.580+/-0.101
+  [thr=0.003] Model CV accuracy: 58.0%
+  [thr=0.003] Pre-computing predictions for 11983 optimization samples...
+  [thr=0.003] Testing 512 parameter combinations through the v3 execution engine...
+
+  [thr=0.004] Training on 23965 samples (labels: {0: 21102, 1: 1457, -1: 1406})...
+2026-09-11 15:53:49,558 [INFO] ai.model: Model trained: test_acc=0.750, cv_acc=0.682+/-0.116
+  [thr=0.004] Model CV accuracy: 68.2%
+  [thr=0.004] Pre-computing predictions for 11983 optimization samples...
+  [thr=0.004] Testing 512 parameter combinations through the v3 execution engine...
+
+  Tested 2048 valid combinations
+
+  TOP 10 PARAMETER COMBINATIONS:
+     Thr    SL    TP  Conf   RR  ADX |   Return  Sharpe    WR    PF   MaxDD    #
+  ----------------------------------------------------------------------------------
+   0.002   2.5   4.0  0.60  1.0   25 |   +8.20%    0.70 38.2%  1.18  -9.55%   76
+   0.002   2.5   4.0  0.60  1.5   25 |   +8.20%    0.70 38.2%  1.18  -9.55%   76
+   0.002   2.5   4.0  0.60  1.0   25 |   +7.33%    0.62 39.3%  1.14 -10.44%   89
+   0.002   2.5   4.0  0.60  1.5   25 |   +7.33%    0.62 39.3%  1.14 -10.44%   89
+   0.002   2.0   4.0  0.60  1.0   25 |   +5.65%    0.51 33.0%  1.12 -10.20%   88
+   0.002   2.0   4.0  0.60  1.5   25 |   +5.65%    0.51 33.0%  1.12 -10.20%   88
+   0.002   2.0   4.0  0.60  2.0   25 |   +5.65%    0.51 33.0%  1.12 -10.20%   88
+   0.003   2.5   3.0  0.50  1.0   15 |   +5.90%    0.47 48.7%  1.05 -16.28%  376
+   0.003   2.5   3.0  0.50  1.0    0 |   +5.82%    0.47 48.7%  1.05 -16.28%  378
+   0.002   2.5   4.0  0.60  1.0   20 |   +5.00%    0.44 37.5%  1.11 -11.82%   80
+
+  BEST (>= 30 trades): thr=0.0015 SL=2.5xATR TP=4.0xATR Conf=0.6 ADX>25 RR>=1.0
+  Return=+8.20% Sharpe=0.70 WR=38.2% PF=1.18
+============================================================
+
+  >>> RECOMMENDED for XAU/USD (Gold 15m):
+      Label threshold = 0.0015
+      SL = 2.5x ATR
+      TP = 4.0x ATR
+      AI Confidence >= 0.6
+      Min R:R = 1.0
+      ADX filter >= 25
+EXIT=0

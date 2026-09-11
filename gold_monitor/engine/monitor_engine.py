@@ -627,7 +627,7 @@ class MonitorEngine:
 
                 features = FeatureEngineer.create_features(df)
                 labels = FeatureEngineer.create_labels(
-                    df, horizon=AI.PREDICTION_HORIZON,
+                    df, horizon=inst.horizon(),
                     threshold=inst.PRICE_CHANGE_THRESHOLD,
                 )
 
