@@ -174,7 +174,7 @@ class CapitalPrices:
 
 
 def bars_for(period: str, interval: str, session_24_7: bool = False,
-             cap: int = 15000) -> int:
+             cap: int = 60000) -> int:
     """How many bars of `interval` cover a yfinance-style `period`
     ('5d', '30d', '2y'), given the instrument's trading hours."""
     n, unit = int(period[:-1]), period[-1]

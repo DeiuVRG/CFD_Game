@@ -98,7 +98,8 @@ def test_bars_for():
     assert bars_for("30d", "1h", session_24_7=True) == 720
     assert bars_for("30d", "1h", session_24_7=False) == int(30 * 23 * 5 / 7)   # ~492
     assert bars_for("2y", "1h", session_24_7=False) == int(730 * 23 * 5 / 7)   # ~11992
-    assert bars_for("2y", "1h", session_24_7=True) == 15000                    # capped
+    assert bars_for("2y", "1h", session_24_7=True) == 17520
+    assert bars_for("2y", "15m", session_24_7=True) == 60000                   # capped
     assert bars_for("5d", "5m", session_24_7=True) == 1440
     assert bars_for("1d", "1h", session_24_7=True) == 60                       # floor
 

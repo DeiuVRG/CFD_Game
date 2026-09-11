@@ -53,6 +53,9 @@ class InstrumentConfig:
     # Label threshold grid searched by the optimizer. Empty = only
     # PRICE_CHANGE_THRESHOLD is used.
     THRESHOLD_GRID: list = field(default_factory=list)
+    # Label horizon in TRAIN_INTERVAL candles (None -> AI.PREDICTION_HORIZON).
+    # A 15m instrument needs its own: 6 candles would be 1h30, not 6h.
+    PREDICTION_HORIZON: Optional[int] = None
     SPREAD_PIPS: float = 3.0   # Typical spread in pips (for cost modeling)
     PIP_VALUE: float = 0.01    # Value of 1 pip in price units
     SPREAD_PCT: float = 0.0    # Optional ROUND-TRIP spread as fraction of price
@@ -91,6 +94,9 @@ class InstrumentConfig:
 
     def threshold_grid(self) -> list:
         return self.THRESHOLD_GRID or [self.PRICE_CHANGE_THRESHOLD]
+
+    def horizon(self) -> int:
+        return self.PREDICTION_HORIZON if self.PREDICTION_HORIZON is not None else AI.PREDICTION_HORIZON
 
     @property
     def active(self) -> bool:
@@ -142,6 +148,33 @@ INSTRUMENTS = [
         # with known OOS numbers), not the global defaults (user decision
         # 2026-09-07). Re-declare before any new OOS run.
         SL_ATR=2.5, TP_ATR=4.0, CONFIDENCE=0.50, ADX_MIN=15.0, MIN_RR=1.0,
+    ),
+    InstrumentConfig(
+        # Gold on 15-MINUTE candles (user request 2026-09-11: more frequent
+        # decisions). A separate model/config, evaluated from scratch through
+        # optimizer -> backtest before any demo activation. Costs use the
+        # Capital.com gold spread (~7.5 pips), where it would execute.
+        SYMBOL="GC=F",
+        CAPITAL_EPIC="GOLD",
+        SYMBOL_DISPLAY="XAU/USD (Gold 15m)",
+        MODEL_PATH="models/gold15m_xgb.pkl",
+        TWELVEDATA_SYMBOL="XAU/USD",
+        TV_SYMBOL="OANDA:XAUUSD",
+        TV_EXCHANGE="cfd",
+        TRAIN_INTERVAL="15m",
+        AI_HISTORY_PERIOD="10d",
+        PREDICTION_HORIZON=8,            # 8 x 15m = 2h
+        # Optimizer (2026-09-11, optimization window = middle 25% of 2y of
+        # Capital.com 15m candles, 2048 combos): thr 0.0015, SL 2.5, TP 4.0,
+        # conf 0.60, ADX 25, RR 1.0 -> +8.20%, PF 1.18, Sharpe 0.70, 76
+        # trades, maxDD -9.6%. Selection rule declared before any OOS run.
+        PRICE_CHANGE_THRESHOLD=0.0015,
+        THRESHOLD_GRID=[0.0015, 0.002, 0.003, 0.004],
+        SL_ATR=2.5, TP_ATR=4.0, CONFIDENCE=0.60, ADX_MIN=25.0, MIN_RR=1.0,
+        SPREAD_PIPS=7.5,
+        PIP_VALUE=0.10,
+        ENABLED=False,
+        DEMO_ENABLED=False,              # only after it is measured
     ),
     InstrumentConfig(
         SYMBOL="EURUSD=X",
